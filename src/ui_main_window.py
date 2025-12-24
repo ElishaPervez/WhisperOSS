@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QComboBox, QCheckBox, QTextEdit, QLineEdit, QGroupBox, QInputDialog,
-    QFrame, QGraphicsDropShadowEffect, QScrollArea, QSlider
+    QFrame, QGraphicsDropShadowEffect, QScrollArea, QSlider, QApplication
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QSize, pyqtProperty
 from PyQt6.QtGui import QFont, QColor, QPainter, QBrush, QPen, QLinearGradient, QRadialGradient
@@ -406,9 +406,40 @@ class MainWindow(QWidget):
         transcript_layout.setSpacing(12)
         transcript_layout.setContentsMargins(20, 20, 20, 20)
         
+        # Header with Title and Copy Button
+        header_layout = QHBoxLayout()
+
         transcript_title = QLabel("📝 Last Transcription")
         transcript_title.setObjectName("SectionTitle")
-        transcript_layout.addWidget(transcript_title)
+        header_layout.addWidget(transcript_title)
+
+        header_layout.addStretch()
+
+        self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setFixedSize(60, 24)
+        self.copy_btn.setToolTip("Copy transcription to clipboard")
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                color: #e0e0e0;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.2);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.05);
+            }
+        """)
+        self.copy_btn.clicked.connect(self.copy_log_to_clipboard)
+        header_layout.addWidget(self.copy_btn)
+
+        transcript_layout.addLayout(header_layout)
         
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
@@ -454,6 +485,52 @@ class MainWindow(QWidget):
 
     def update_log(self, text):
         self.log_display.setText(text)
+
+    def copy_log_to_clipboard(self):
+        text = self.log_display.toPlainText()
+        if not text:
+            return
+
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+
+        # Feedback animation
+        original_text = "Copy"
+        self.copy_btn.setText("Copied!")
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(74, 222, 128, 0.2);
+                border: 1px solid rgba(74, 222, 128, 0.4);
+                border-radius: 4px;
+                color: #a3e635;
+                font-size: 11px;
+                font-weight: 600;
+            }
+        """)
+        self.copy_btn.setEnabled(False)
+
+        QTimer.singleShot(1500, lambda: self._reset_copy_btn(original_text))
+
+    def _reset_copy_btn(self, original_text):
+        self.copy_btn.setText(original_text)
+        self.copy_btn.setEnabled(True)
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                color: #e0e0e0;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.2);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.05);
+            }
+        """)
 
     def prompt_api_key(self):
         text, ok = QInputDialog.getText(self, "Groq API Key", "Enter your Groq API Key:", text=self.config.get("api_key", ""))
