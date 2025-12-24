@@ -34,6 +34,9 @@ class AnimatedToggle(QCheckBox):
         self.update()
     
     handle_position = pyqtProperty(float, _get_handle_position, _set_handle_position)
+
+    def hitButton(self, pos: QPoint):
+        return self.contentsRect().contains(pos)
     
     def paintEvent(self, event):
         painter = QPainter(self)
