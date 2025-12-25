@@ -4,7 +4,11 @@ import os
 import tempfile
 import threading
 import numpy as np
+import logging
 from PyQt6.QtCore import QObject, pyqtSignal
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 class AudioRecorder(QObject):
     # Signal to send audio amplitude data for visualization (0.0 to 1.0)
@@ -48,6 +52,7 @@ class AudioRecorder(QObject):
             self.is_recording = True
             self.stream.start_stream()
         except Exception as e:
+            logger.error(f"Failed to start recording: {e}")
             self.error_occurred.emit(f"Failed to start recording: {e}")
 
     def stop_recording(self):
@@ -56,9 +61,13 @@ class AudioRecorder(QObject):
 
         self.is_recording = False
         if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-            self.stream = None
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception as e:
+                logger.error(f"Error closing stream: {e}")
+            finally:
+                self.stream = None
         
         self._save_file()
         self.recording_finished.emit(self.filename)
@@ -75,14 +84,9 @@ class AudioRecorder(QObject):
                 return (in_data, pyaudio.paContinue)
 
             # Peak Amplitude Calculation (Optimized)
-            # ~2x faster than RMS. Uses max absolute value.
-            # Handles int16 -32768 overflow by ignoring it (max selects positive peak if any)
-            # or just clamping.
             peak = np.max(np.abs(audio_data))
             
-            # Normalize: Peak of sine wave at max volume is 32767.
-            # RMS ~ Peak * 0.707. Old divisor was 5000 RMS -> ~7070 Peak.
-            # We use 7000.0 to maintain similar visual sensitivity for speech.
+            # Normalize
             normalized_peak = min(peak / 7000.0, 1.0)
             
             self.visualizer_update.emit(normalized_peak)
@@ -98,16 +102,26 @@ class AudioRecorder(QObject):
             wf.writeframes(b''.join(self.frames))
             wf.close()
         except Exception as e:
+            logger.error(f"Failed to save file: {e}")
             self.error_occurred.emit(f"Failed to save file: {e}")
 
     def list_devices(self):
-        info = self.p.get_host_api_info_by_index(0)
-        num_devices = info.get('deviceCount')
-        devices = []
-        for i in range(num_devices):
-            if (self.p.get_device_info_by_host_api_device_index(0, i).get('maxInputChannels')) > 0:
-                devices.append((i, self.p.get_device_info_by_host_api_device_index(0, i).get('name')))
-        return devices
+        """Lists available input devices."""
+        try:
+            info = self.p.get_host_api_info_by_index(0)
+            num_devices = info.get('deviceCount')
+            devices = []
+            for i in range(num_devices):
+                device_info = self.p.get_device_info_by_host_api_device_index(0, i)
+                if device_info.get('maxInputChannels') > 0:
+                    devices.append((i, device_info.get('name')))
+            return devices
+        except Exception as e:
+            logger.error(f"Error listing devices: {e}")
+            return []
 
     def __del__(self):
-        self.p.terminate()
+        try:
+            self.p.terminate()
+        except Exception:
+            pass
