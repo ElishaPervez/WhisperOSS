@@ -22,7 +22,9 @@ DEFAULT_CONFIG = {
     "transcription_model": "whisper-large-v3",
     "formatter_model": "llama3-70b-8192",  # Default fast/smart model
     "input_device_index": None, # None means default
-    "use_formatter": False
+    "use_formatter": False,
+    "translation_enabled": False,
+    "target_language": "English"
 }
 
 class ConfigManager:
