@@ -1,0 +1,27 @@
+# Plan: Refactor and Stabilize Core Architecture
+
+## Phase 1: Test Infrastructure & Configuration
+- [ ] Task: Set up test environment
+    - [ ] Subtask: Install `pytest`, `pytest-cov`, `pytest-qt` (if needed for UI tests).
+    - [ ] Subtask: Create `conftest.py` with initial fixtures (e.g., mock config).
+- [ ] Task: Refactor Config Manager
+    - [ ] Subtask: Write tests for `ConfigManager` (load, save, default values).
+    - [ ] Subtask: Refactor `src/config_manager.py` to ensure it passes tests and handles missing/corrupt files gracefully.
+- [ ] Task: Conductor - User Manual Verification 'Test Infrastructure & Configuration' (Protocol in workflow.md)
+
+## Phase 2: Core Logic Refactoring (Non-UI)
+- [ ] Task: Refactor Groq Client
+    - [ ] Subtask: Write tests for `GroqClient` (mocking the actual API calls).
+    - [ ] Subtask: Refactor `src/groq_client.py` to improve error handling and interface clarity.
+- [ ] Task: Refactor Audio Recorder
+    - [ ] Subtask: Write tests for `AudioRecorder` (mocking PyAudio).
+    - [ ] Subtask: Refactor `src/audio_recorder.py` to ensure it emits signals or callbacks instead of directly manipulating UI, making it testable.
+- [ ] Task: Conductor - User Manual Verification 'Core Logic Refactoring (Non-UI)' (Protocol in workflow.md)
+
+## Phase 3: UI Integration & Main Entry Point
+- [ ] Task: Refactor Main Window Logic
+    - [ ] Subtask: Write tests for key UI interactions (using `pytest-qt` or by separating logic into a Controller class).
+    - [ ] Subtask: Update `src/ui_main_window.py` to use the refactored `ConfigManager`, `GroqClient`, and `AudioRecorder`.
+- [ ] Task: Clean up Main Entry Point
+    - [ ] Subtask: Refactor `src/main.py` to simply bootstrap the application, ensuring clean startup/shutdown.
+- [ ] Task: Conductor - User Manual Verification 'UI Integration & Main Entry Point' (Protocol in workflow.md)
