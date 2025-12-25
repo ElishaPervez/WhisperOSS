@@ -1,12 +1,12 @@
 # Plan: Refactor and Stabilize Core Architecture
 
 ## Phase 1: Test Infrastructure & Configuration
-- [ ] Task: Set up test environment
-    - [ ] Subtask: Install `pytest`, `pytest-cov`, `pytest-qt` (if needed for UI tests).
-    - [ ] Subtask: Create `conftest.py` with initial fixtures (e.g., mock config).
-- [ ] Task: Refactor Config Manager
-    - [ ] Subtask: Write tests for `ConfigManager` (load, save, default values).
-    - [ ] Subtask: Refactor `src/config_manager.py` to ensure it passes tests and handles missing/corrupt files gracefully.
+- [x] Task: Set up test environment
+    - [x] Subtask: Install `pytest`, `pytest-cov`, `pytest-qt` (if needed for UI tests).
+    - [x] Subtask: Create `conftest.py` with initial fixtures (e.g., mock config).
+- [x] Task: Refactor Config Manager
+    - [x] Subtask: Write tests for `ConfigManager` (load, save, default values).
+    - [x] Subtask: Refactor `src/config_manager.py` to ensure it passes tests and handles missing/corrupt files gracefully.
 - [ ] Task: Conductor - User Manual Verification 'Test Infrastructure & Configuration' (Protocol in workflow.md)
 
 ## Phase 2: Core Logic Refactoring (Non-UI)

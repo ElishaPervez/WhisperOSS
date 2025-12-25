@@ -4,3 +4,7 @@ keyboard>=0.13.5
 pyperclip>=1.8.2
 groq>=0.4.0
 numpy>=1.24.0
+pytest
+pytest-cov
+pytest-qt
+pytest-mock
