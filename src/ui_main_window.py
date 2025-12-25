@@ -181,7 +181,7 @@ class MainWindow(QWidget):
         super().__init__()
         self.config = config_manager
         self.setWindowTitle("WhisperOSS")
-        self.resize(380, 750) # Increased height for translation controls
+        self.resize(380, 650)
         self._setup_styling()
         
         self.is_recording = False
@@ -401,26 +401,6 @@ class MainWindow(QWidget):
         self.model_combo = QComboBox()
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
         config_layout.addWidget(self.model_combo)
-
-        # Translation Toggle with label
-        trans_toggle_container = QHBoxLayout()
-        trans_toggle_label = QLabel("Convert")
-        trans_toggle_label.setStyleSheet("color: #e0e0e0; font-size: 13px;")
-        self.translation_toggle = AnimatedToggle()
-        self.translation_toggle.setChecked(self.config.get("translation_enabled", False))
-        self.translation_toggle.stateChanged.connect(self.on_translation_toggle_changed)
-        trans_toggle_container.addWidget(trans_toggle_label)
-        trans_toggle_container.addStretch()
-        trans_toggle_container.addWidget(self.translation_toggle)
-        config_layout.addLayout(trans_toggle_container)
-
-        # Language Selector
-        self.language_label = QLabel("TARGET LANGUAGE")
-        config_layout.addWidget(self.language_label)
-        self.language_combo = QComboBox()
-        self.language_combo.addItems(["English", "Urdu"])
-        self.language_combo.currentTextChanged.connect(self.on_language_changed)
-        config_layout.addWidget(self.language_combo)
         
         layout.addWidget(config_panel)
 
@@ -489,14 +469,6 @@ class MainWindow(QWidget):
         self.model_combo.setEnabled(use_formatter)
         self.model_label.setEnabled(use_formatter)
 
-        translation_enabled = self.config.get("translation_enabled", False)
-        self.translation_toggle.setChecked(translation_enabled)
-        self.language_combo.setEnabled(translation_enabled)
-        self.language_label.setEnabled(translation_enabled)
-        
-        target_lang = self.config.get("target_language", "English")
-        self.language_combo.setCurrentText(target_lang)
-
     def on_record_clicked(self, checked):
         self.is_recording = checked
         self.record_btn.setRecording(checked)
@@ -522,18 +494,6 @@ class MainWindow(QWidget):
     def on_model_changed(self, text):
         if text:
             self.config.set("formatter_model", text)
-
-    def on_translation_toggle_changed(self, state):
-        enabled = (state == 2)
-        self.config.set("translation_enabled", enabled)
-        self.language_combo.setEnabled(enabled)
-        self.language_label.setEnabled(enabled)
-        self.config_changed.emit("translation_enabled", enabled)
-
-    def on_language_changed(self, text):
-        if text:
-            self.config.set("target_language", text)
-            self.config_changed.emit("target_language", text)
 
     def update_log(self, text):
         self.log_display.setText(text)
