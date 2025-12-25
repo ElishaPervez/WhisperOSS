@@ -12,7 +12,9 @@ def mock_config():
         "api_key": "test_key",
         "use_formatter": False,
         "input_device_index": 0,
-        "formatter_model": "test_model"
+        "formatter_model": "test_model",
+        "translation_enabled": False,
+        "target_language": "English"
     }.get(key, default)
     return config
 
@@ -27,6 +29,8 @@ def test_init(app, qtbot, mock_config):
     assert window.windowTitle() == "WhisperOSS"
     assert window.record_btn.text() == "REC"
     assert window.format_toggle.isChecked() is False
+    assert window.translation_toggle.isChecked() is False
+    assert window.language_combo.currentText() == "English"
 
 def test_record_toggle(app, qtbot, mock_config):
     window = MainWindow(mock_config)
@@ -72,6 +76,25 @@ def test_toggle_formatter(app, qtbot, mock_config):
     window.format_toggle.setChecked(True)
     assert window.model_combo.isEnabled() is True
     mock_config.set.assert_called_with("use_formatter", True)
+
+def test_toggle_translation(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    
+    # Initially False
+    assert window.language_combo.isEnabled() is False
+    
+    # Toggle On
+    window.translation_toggle.setChecked(True)
+    assert window.language_combo.isEnabled() is True
+    mock_config.set.assert_called_with("translation_enabled", True)
+
+def test_language_change(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    
+    window.language_combo.setCurrentText("Urdu")
+    mock_config.set.assert_called_with("target_language", "Urdu")
 
 def test_copy_log(app, qtbot, mock_config):
     window = MainWindow(mock_config)
