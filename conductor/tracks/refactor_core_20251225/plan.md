@@ -22,6 +22,6 @@
 - [x] Task: Refactor Main Window Logic b02edd5
     - [x] Subtask: Write tests for key UI interactions (using `pytest-qt` or by separating logic into a Controller class).
     - [x] Subtask: Update `src/ui_main_window.py` to use the refactored `ConfigManager`, `GroqClient`, and `AudioRecorder`.
-- [ ] Task: Clean up Main Entry Point
-    - [ ] Subtask: Refactor `src/main.py` to simply bootstrap the application, ensuring clean startup/shutdown.
+- [x] Task: Clean up Main Entry Point 05dede7
+    - [x] Subtask: Refactor `src/main.py` to simply bootstrap the application, ensuring clean startup/shutdown.
 - [ ] Task: Conductor - User Manual Verification 'UI Integration & Main Entry Point' (Protocol in workflow.md)
