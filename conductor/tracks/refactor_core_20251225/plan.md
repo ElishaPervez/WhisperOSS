@@ -16,7 +16,7 @@
 - [x] Task: Refactor Audio Recorder 29997eb
     - [x] Subtask: Write tests for `AudioRecorder` (mocking PyAudio).
     - [x] Subtask: Refactor `src/audio_recorder.py` to ensure it emits signals or callbacks instead of directly manipulating UI, making it testable.
-- [ ] Task: Conductor - User Manual Verification 'Core Logic Refactoring (Non-UI)' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Core Logic Refactoring (Non-UI)' (Protocol in workflow.md) [checkpoint: db8bf9f]
 
 ## Phase 3: UI Integration & Main Entry Point
 - [ ] Task: Refactor Main Window Logic
