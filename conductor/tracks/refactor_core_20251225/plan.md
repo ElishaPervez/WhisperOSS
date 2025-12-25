@@ -24,4 +24,4 @@
     - [x] Subtask: Update `src/ui_main_window.py` to use the refactored `ConfigManager`, `GroqClient`, and `AudioRecorder`.
 - [x] Task: Clean up Main Entry Point 05dede7
     - [x] Subtask: Refactor `src/main.py` to simply bootstrap the application, ensuring clean startup/shutdown.
-- [ ] Task: Conductor - User Manual Verification 'UI Integration & Main Entry Point' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'UI Integration & Main Entry Point' (Protocol in workflow.md) [checkpoint: 947fe51]
