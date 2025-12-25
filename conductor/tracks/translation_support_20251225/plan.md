@@ -4,9 +4,9 @@
 - [x] Task: Update Configuration and Constants fa9fdfd
     - [x] Subtask: Add `translation_enabled` and `target_language` to `src/config_manager.py`.
     - [x] Subtask: Add `SYSTEM_PROMPT_TRANSLATOR` to `src/prompts.py`.
-- [x] Task: Add Translation Controls to UI 59511a5
-    - [x] Subtask: Write tests for `MainWindow` to verify the new toggle and dropdown behavior.
-    - [x] Subtask: Implement the "Convert" toggle and Language selector in `src/ui_main_window.py`.
+- [ ] Task: Add Translation Controls to UI
+    - [ ] Subtask: Write tests for `MainWindow` to verify the new toggle and dropdown behavior.
+    - [ ] Subtask: Implement the "Convert" toggle and Language selector in `src/ui_main_window.py`.
 - [ ] Task: Conductor - User Manual Verification 'Data Model & UI Components' (Protocol in workflow.md)
 
 ## Phase 2: Logic Integration
