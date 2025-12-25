@@ -1,9 +1,9 @@
 # Plan: Translation Support (English/Urdu)
 
 ## Phase 1: Data Model & UI Components
-- [ ] Task: Update Configuration and Constants
-    - [ ] Subtask: Add `translation_enabled` and `target_language` to `src/config_manager.py`.
-    - [ ] Subtask: Add `SYSTEM_PROMPT_TRANSLATOR` to `src/prompts.py`.
+- [x] Task: Update Configuration and Constants fa9fdfd
+    - [x] Subtask: Add `translation_enabled` and `target_language` to `src/config_manager.py`.
+    - [x] Subtask: Add `SYSTEM_PROMPT_TRANSLATOR` to `src/prompts.py`.
 - [ ] Task: Add Translation Controls to UI
     - [ ] Subtask: Write tests for `MainWindow` to verify the new toggle and dropdown behavior.
     - [ ] Subtask: Implement the "Convert" toggle and Language selector in `src/ui_main_window.py`.
