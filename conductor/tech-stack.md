@@ -12,3 +12,9 @@
 ## Utilities
 - **Global Hotkeys:** Keyboard library
 - **Clipboard Management:** Pyperclip
+
+## Development & Testing
+- **Testing Framework:** Pytest
+- **Coverage:** Pytest-cov
+- **UI Testing:** Pytest-qt
+- **Mocking:** Pytest-mock, Unittest.mock
