@@ -7,7 +7,7 @@
 - [x] Task: Refactor Config Manager
     - [x] Subtask: Write tests for `ConfigManager` (load, save, default values).
     - [x] Subtask: Refactor `src/config_manager.py` to ensure it passes tests and handles missing/corrupt files gracefully.
-- [ ] Task: Conductor - User Manual Verification 'Test Infrastructure & Configuration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Test Infrastructure & Configuration' (Protocol in workflow.md) [checkpoint: b1ad169]
 
 ## Phase 2: Core Logic Refactoring (Non-UI)
 - [ ] Task: Refactor Groq Client
