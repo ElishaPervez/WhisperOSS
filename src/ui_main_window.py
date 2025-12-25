@@ -186,6 +186,7 @@ class MainWindow(QWidget):
         
         self.is_recording = False
         self.setup_ui()
+        self._init_ui_state()
 
     def _setup_styling(self):
         self.setStyleSheet("""
@@ -461,6 +462,13 @@ class MainWindow(QWidget):
         self.api_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.api_key_btn)
 
+    def _init_ui_state(self):
+        """Initialize UI state based on config."""
+        use_formatter = self.config.get("use_formatter", False)
+        self.format_toggle.setChecked(use_formatter)
+        self.model_combo.setEnabled(use_formatter)
+        self.model_label.setEnabled(use_formatter)
+
     def on_record_clicked(self, checked):
         self.is_recording = checked
         self.record_btn.setRecording(checked)
@@ -472,6 +480,7 @@ class MainWindow(QWidget):
         self.record_btn.setRecording(is_recording)
 
     def on_device_changed(self, index):
+        if index < 0: return
         device_id = self.device_combo.itemData(index)
         self.config.set("input_device_index", device_id)
         self.config_changed.emit("input_device_index", device_id)
@@ -543,12 +552,14 @@ class MainWindow(QWidget):
             self._set_connected_status("API Key Updated")
 
     def set_device_list(self, devices):
+        self.device_combo.blockSignals(True)
         self.device_combo.clear()
         current_dev = self.config.get("input_device_index")
         for i, (idx, name) in enumerate(devices):
             self.device_combo.addItem(name, idx)
             if idx == current_dev:
                 self.device_combo.setCurrentIndex(i)
+        self.device_combo.blockSignals(False)
 
     def set_model_list(self, models):
         self.model_combo.blockSignals(True)
