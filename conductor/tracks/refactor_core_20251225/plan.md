@@ -13,9 +13,9 @@
 - [x] Task: Refactor Groq Client 9c6070e
     - [x] Subtask: Write tests for `GroqClient` (mocking the actual API calls).
     - [x] Subtask: Refactor `src/groq_client.py` to improve error handling and interface clarity.
-- [ ] Task: Refactor Audio Recorder
-    - [ ] Subtask: Write tests for `AudioRecorder` (mocking PyAudio).
-    - [ ] Subtask: Refactor `src/audio_recorder.py` to ensure it emits signals or callbacks instead of directly manipulating UI, making it testable.
+- [x] Task: Refactor Audio Recorder 29997eb
+    - [x] Subtask: Write tests for `AudioRecorder` (mocking PyAudio).
+    - [x] Subtask: Refactor `src/audio_recorder.py` to ensure it emits signals or callbacks instead of directly manipulating UI, making it testable.
 - [ ] Task: Conductor - User Manual Verification 'Core Logic Refactoring (Non-UI)' (Protocol in workflow.md)
 
 ## Phase 3: UI Integration & Main Entry Point
