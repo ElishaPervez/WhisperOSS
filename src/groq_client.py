@@ -1,6 +1,14 @@
 import os
+import logging
 from groq import Groq, APIConnectionError, APIStatusError
-from prompts import SYSTEM_PROMPT_FORMATTER
+from src.prompts import SYSTEM_PROMPT_FORMATTER
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
+class GroqClientError(Exception):
+    """Custom exception for Groq Client errors."""
+    pass
 
 class GroqClient:
     def __init__(self, api_key):
@@ -13,7 +21,7 @@ class GroqClient:
             clean_key = api_key.strip() if api_key else ""
             self.client = Groq(api_key=clean_key)
         except Exception as e:
-            print(f"Error initializing Groq client: {e}")
+            logger.error(f"Error initializing Groq client: {e}")
             self.client = None
 
     def check_connection(self):
@@ -38,12 +46,12 @@ class GroqClient:
             
             return transcription_models, llm_models
         except Exception as e:
-            print(f"Error listing models: {e}")
+            logger.error(f"Error listing models: {e}")
             return [], []
 
     def transcribe(self, file_path, model_id="whisper-large-v3"):
         if not self.client:
-            raise ValueError("API Key not set.")
+            raise GroqClientError("API Key not set.")
 
         try:
             with open(file_path, "rb") as file:
@@ -56,13 +64,13 @@ class GroqClient:
                 )
             return transcription.text
         except APIStatusError as e:
-            return f"API Error: {e.message}"
+            raise GroqClientError(f"API Error: {e.message}")
         except Exception as e:
-            return f"Error: {e}"
+            raise GroqClientError(f"Transcription failed: {e}")
 
     def format_text(self, raw_text, model_id="llama3-70b-8192"):
         if not self.client:
-            raise ValueError("API Key not set.")
+            raise GroqClientError("API Key not set.")
 
         try:
             completion = self.client.chat.completions.create(
@@ -81,4 +89,4 @@ class GroqClient:
             )
             return completion.choices[0].message.content
         except Exception as e:
-            return f"Formatting Error: {e}"
+            raise GroqClientError(f"Formatting failed: {e}")
