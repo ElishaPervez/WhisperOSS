@@ -10,9 +10,9 @@
 - [x] Task: Conductor - User Manual Verification 'Test Infrastructure & Configuration' (Protocol in workflow.md) [checkpoint: b1ad169]
 
 ## Phase 2: Core Logic Refactoring (Non-UI)
-- [ ] Task: Refactor Groq Client
-    - [ ] Subtask: Write tests for `GroqClient` (mocking the actual API calls).
-    - [ ] Subtask: Refactor `src/groq_client.py` to improve error handling and interface clarity.
+- [x] Task: Refactor Groq Client 9c6070e
+    - [x] Subtask: Write tests for `GroqClient` (mocking the actual API calls).
+    - [x] Subtask: Refactor `src/groq_client.py` to improve error handling and interface clarity.
 - [ ] Task: Refactor Audio Recorder
     - [ ] Subtask: Write tests for `AudioRecorder` (mocking PyAudio).
     - [ ] Subtask: Refactor `src/audio_recorder.py` to ensure it emits signals or callbacks instead of directly manipulating UI, making it testable.
