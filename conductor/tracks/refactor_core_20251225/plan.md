@@ -19,9 +19,9 @@
 - [x] Task: Conductor - User Manual Verification 'Core Logic Refactoring (Non-UI)' (Protocol in workflow.md) [checkpoint: db8bf9f]
 
 ## Phase 3: UI Integration & Main Entry Point
-- [ ] Task: Refactor Main Window Logic
-    - [ ] Subtask: Write tests for key UI interactions (using `pytest-qt` or by separating logic into a Controller class).
-    - [ ] Subtask: Update `src/ui_main_window.py` to use the refactored `ConfigManager`, `GroqClient`, and `AudioRecorder`.
+- [x] Task: Refactor Main Window Logic b02edd5
+    - [x] Subtask: Write tests for key UI interactions (using `pytest-qt` or by separating logic into a Controller class).
+    - [x] Subtask: Update `src/ui_main_window.py` to use the refactored `ConfigManager`, `GroqClient`, and `AudioRecorder`.
 - [ ] Task: Clean up Main Entry Point
     - [ ] Subtask: Refactor `src/main.py` to simply bootstrap the application, ensuring clean startup/shutdown.
 - [ ] Task: Conductor - User Manual Verification 'UI Integration & Main Entry Point' (Protocol in workflow.md)
