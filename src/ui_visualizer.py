@@ -264,7 +264,8 @@ class AudioVisualizer(QWidget):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | 
             Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Tool
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowTransparentForInput  # Click-through: allows clicking elements behind
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(120, 36)  # Compact size

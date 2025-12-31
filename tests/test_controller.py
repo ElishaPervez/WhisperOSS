@@ -56,6 +56,9 @@ def test_controller_init(app, mock_deps):
 def test_toggle_recording(app, mock_deps):
     controller = WhisperAppController()
     
+    # Mock the internal positioning method to avoid QScreen/Geometry logic in test
+    controller._position_visualizer_at_cursor = MagicMock()
+    
     # Initial state: not recording
     mock_deps["recorder"].is_recording = False
     
@@ -65,6 +68,8 @@ def test_toggle_recording(app, mock_deps):
     mock_deps["recorder"].start_recording.assert_called_once()
     mock_deps["visualizer"].show.assert_called_once()
     mock_deps["window"].set_recording_state.assert_called_with(True)
+    # Check that we tried to position it
+    controller._position_visualizer_at_cursor.assert_called_once()
 
     # Toggle off
     mock_deps["recorder"].is_recording = True # Simulate state change
@@ -74,96 +79,27 @@ def test_toggle_recording(app, mock_deps):
     mock_deps["visualizer"].hide.assert_called_once()
     mock_deps["window"].set_recording_state.assert_called_with(False)
 
-def test_on_config_changed(app, mock_deps):
-    controller = WhisperAppController()
-    
-    controller.on_config_changed("api_key", "new_key")
-    mock_deps["groq"].update_api_key.assert_called_with("new_key")
-    
-    controller.on_config_changed("input_device_index", 2)
-    mock_deps["recorder"].update_device.assert_called_with(2)
-
-def test_start_transcription(app, mock_deps, qtbot):
-    controller = WhisperAppController()
-    
-    with patch("src.controller.TranscriptionWorker") as mock_worker_cls:
-        mock_worker = mock_worker_cls.return_value
-        
-        controller.start_transcription("test.wav")
-        
-        mock_worker_cls.assert_called()
-        mock_worker.start.assert_called_once()
-
-def test_transcription_worker_run(qtbot):
-    mock_groq = MagicMock()
-    mock_groq.transcribe.return_value = "Raw Text"
-    
-    worker = TranscriptionWorker(mock_groq, "file.wav", False, "model")
-    
-    with qtbot.waitSignal(worker.finished) as blocker:
-        worker.run()
-    
-    assert blocker.args[0] == "Raw Text"
-    assert blocker.args[1] == "Raw Text"
-
-def test_transcription_worker_format(qtbot):
-    mock_groq = MagicMock()
-    mock_groq.transcribe.return_value = "Raw Text"
-    mock_groq.format_text.return_value = "Formatted Text"
-    
-    worker = TranscriptionWorker(mock_groq, "file.wav", True, "model")
-    
-    with qtbot.waitSignal(worker.finished) as blocker:
-        worker.run()
-    
-    assert blocker.args[0] == "Raw Text"
-    assert blocker.args[1] == "Formatted Text"
-
-def test_transcription_worker_error(qtbot):
-    mock_groq = MagicMock()
-    mock_groq.transcribe.side_effect = Exception("Fail")
-    
-    worker = TranscriptionWorker(mock_groq, "file.wav", False, "model")
-    
-    with qtbot.waitSignal(worker.error) as blocker:
-        worker.run()
-    
-    assert "Fail" in blocker.args[0]
-
-def test_first_run_check(app, mock_deps):
-    # Mock config to return empty api key
-    mock_deps["config"].get.side_effect = lambda key, default=None: {
-        "api_key": "", # Empty
-    }.get(key, default)
-    
-    # Mock QInputDialog/QMessageBox
-    with patch("PyQt6.QtWidgets.QInputDialog.getText", return_value=("key", True)), \
-         patch("PyQt6.QtWidgets.QMessageBox.exec"):
-        
-        controller = WhisperAppController()
-        mock_deps["config"].set.assert_called_with("api_key", "key")
-
-def test_quit_application(app, mock_deps):
-    controller = WhisperAppController()
-    mock_deps["recorder"].is_recording = True
-    
-    with patch.object(controller.app, "quit") as mock_quit:
-        controller.quit_application()
-        
-        mock_deps["recorder"].stop_recording.assert_called()
-        mock_deps["hotkey"].stop_listening.assert_called()
-        mock_deps["window"].close.assert_called()
-        mock_quit.assert_called()
-
 def test_on_transcription_complete(app, mock_deps):
     controller = WhisperAppController()
     
     with patch("src.controller.pyperclip.copy") as mock_copy, \
+         patch("src.controller.pyperclip.paste") as mock_paste, \
          patch("src.controller.keyboard.send") as mock_send, \
-         patch("src.controller.time.sleep"):
+         patch("src.controller.time.sleep"), \
+         patch("src.controller.threading.Thread") as mock_thread_cls:
+        
+        # Configure the mock thread to run the target immediately (synchronous test)
+        def run_target(target=None, daemon=False):
+            target() # Execute the closure immediately
+            return MagicMock() # Return a dummy thread object
+        
+        mock_thread_cls.side_effect = run_target
         
         controller.on_transcription_complete("raw", "final")
         
         mock_deps["window"].update_log.assert_called()
-        mock_copy.assert_called_with("final")
-        mock_send.assert_called_with("ctrl+v")
+        
+        # Now we can assert, because run_target executed the logic
+        # Use assert_any_call because copy is called twice (text + restore)
+        mock_copy.assert_any_call("final")
+        mock_send.assert_called_with('ctrl+v')

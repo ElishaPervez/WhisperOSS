@@ -63,8 +63,10 @@ def test_stop_recording_success(mock_pyaudio, qtbot):
     recorder.stream = mock_stream
     recorder.frames = [b'\x00\x00']
     
-    # Mock wave.open to avoid file I/O
+    # Mock wave.open to avoid actual WAV processing
     with patch("src.audio_recorder.wave.open") as mock_wave:
+        mock_wf = MagicMock()
+        mock_wave.return_value = mock_wf
         with qtbot.waitSignal(recorder.recording_finished) as blocker:
             recorder.stop_recording()
     
@@ -74,8 +76,11 @@ def test_stop_recording_success(mock_pyaudio, qtbot):
     # Use local reference to verify calls
     mock_stream.stop_stream.assert_called_once()
     mock_stream.close.assert_called_once()
-    mock_wave.assert_called_once() 
-    assert blocker.args[0] == recorder.filename
+    mock_wave.assert_called_once()
+    
+    # Now emits BytesIO buffer, not filename (in-memory recording)
+    import io
+    assert hasattr(blocker.args[0], 'read')  # Should be a file-like object (BytesIO)
 
 def test_audio_callback_visualizer(mock_pyaudio, qtbot):
     recorder = AudioRecorder()

@@ -1,6 +1,7 @@
 import sys
 import threading
 import time
+import ctypes
 import keyboard
 import pyperclip
 import logging
@@ -19,13 +20,28 @@ from src.ui_visualizer import AudioVisualizer
 # Configure logger
 logger = logging.getLogger(__name__)
 
+
+def get_active_window_title() -> str:
+    """Get the title of the currently active window using Win32 API."""
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        if length > 0:
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+            return buff.value
+    except Exception as e:
+        logger.debug(f"Could not get active window title: {e}")
+    return ""
+
 # Worker Thread for API calls to prevent UI freezing
 class TranscriptionWorker(QThread):
     finished = pyqtSignal(str, str) # raw_text, final_text
     error = pyqtSignal(str)
 
     def __init__(self, groq_client, audio_file, use_formatter, format_model, 
-                 use_translation=False, target_language="English", formatting_style="Default"):
+                 use_translation=False, target_language="English", formatting_style="Default",
+                 active_context=""):
         super().__init__()
         self.groq_client = groq_client
         self.audio_file = audio_file
@@ -34,6 +50,7 @@ class TranscriptionWorker(QThread):
         self.use_translation = use_translation
         self.target_language = target_language
         self.formatting_style = formatting_style
+        self.active_context = active_context
 
     def run(self):
         try:
@@ -52,7 +69,10 @@ class TranscriptionWorker(QThread):
                 else:
                     from src.prompts import get_formatter_prompt
                     prompt = get_formatter_prompt(self.formatting_style)
-                    logger.info(f"Using Formatter Prompt for style: {self.formatting_style}")
+                    # Inject context intelligence if available
+                    if self.active_context:
+                        prompt += f"\n\nContext: The user is currently typing in '{self.active_context}'. Adjust formatting accordingly."
+                    logger.info(f"Using Formatter Prompt for style: {self.formatting_style}, context: {self.active_context or 'None'}")
                     formatted = self.groq_client.format_text(raw_text, self.format_model, system_prompt=prompt)
                 
                 final_text = formatted
@@ -234,7 +254,8 @@ class WhisperAppController(QObject):
         # Move and then explicitly set the position to ensure it sticks
         self.visualizer.move(x, y)
 
-    def start_transcription(self, file_path):
+    def start_transcription(self, audio_source):
+        """Start transcription. audio_source can be BytesIO buffer or file path."""
         self.window.update_log("Transcribing...")
         
         use_fmt = self.config.get("use_formatter")
@@ -242,13 +263,16 @@ class WhisperAppController(QObject):
         use_trans = self.config.get("translation_enabled")
         target_lang = self.config.get("target_language")
         fmt_style = self.config.get("formatting_style", "Default")
+        
+        # Get active window context for context intelligence
+        active_context = get_active_window_title()
 
-        logger.info(f"Starting transcription: fmt={use_fmt}, trans={use_trans}, lang={target_lang}, style={fmt_style}")
+        logger.info(f"Starting transcription: fmt={use_fmt}, trans={use_trans}, lang={target_lang}, style={fmt_style}, context={active_context}")
 
         self.worker = TranscriptionWorker(
-            self.groq, file_path, use_fmt, fmt_model, 
+            self.groq, audio_source, use_fmt, fmt_model, 
             use_translation=use_trans, target_language=target_lang,
-            formatting_style=fmt_style
+            formatting_style=fmt_style, active_context=active_context
         )
         self.worker.finished.connect(self.on_transcription_complete)
         self.worker.error.connect(self.show_error)
@@ -259,15 +283,31 @@ class WhisperAppController(QObject):
         self.paste_text(final)
 
     def paste_text(self, text):
-        try:
-            # Strip leading/trailing whitespace before pasting
-            pyperclip.copy(text.strip())
-            # Give the clipboard a moment to settle using non-blocking delay if possible, 
-            # or just simple sleep since we are in main thread but operation is fast.
-            time.sleep(0.1) 
-            keyboard.send('ctrl+v')
-        except Exception as e:
-            self.show_error(f"Paste Failed: {e}")
+        """Ghost paste: backup clipboard, paste text, restore original clipboard."""
+        def _smart_paste():
+            try:
+                # 1. Backup current clipboard
+                try:
+                    original_clipboard = pyperclip.paste()
+                except Exception:
+                    original_clipboard = None
+                
+                # 2. Copy transcription and paste
+                pyperclip.copy(text.strip())
+                time.sleep(0.05)  # Brief settle time
+                keyboard.send('ctrl+v')
+                
+                # 3. Restore original clipboard after delay
+                if original_clipboard is not None:
+                    time.sleep(0.5)  # Wait for paste to complete
+                    pyperclip.copy(original_clipboard)
+                    logger.debug("Clipboard restored to original content")
+                    
+            except Exception as e:
+                logger.error(f"Smart paste failed: {e}")
+        
+        # Run in background thread to avoid blocking
+        threading.Thread(target=_smart_paste, daemon=True).start()
 
     def show_error(self, msg):
         self.window.update_log(f"Error: {msg}")

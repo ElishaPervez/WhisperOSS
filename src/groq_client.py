@@ -49,12 +49,12 @@ class GroqClient:
             logger.error(f"Error listing models: {e}")
             return [], []
 
-    def transcribe(self, file_path, model_id="whisper-large-v3", prompt=None):
+    def transcribe(self, file_source, model_id="whisper-large-v3", prompt=None):
         """
-        Transcribe audio file using Whisper model.
+        Transcribe audio using Whisper model.
         
         Args:
-            file_path: Path to the audio file
+            file_source: Path to audio file OR BytesIO buffer (for zero-latency)
             model_id: Whisper model to use
             prompt: Optional prompt to guide transcription accuracy.
                    This helps with proper nouns, technical terms, and style.
@@ -63,24 +63,36 @@ class GroqClient:
             raise GroqClientError("API Key not set.")
 
         try:
-            with open(file_path, "rb") as file:
-                # Build transcription parameters
-                params = {
-                    "file": (file_path, file.read()),
-                    "model": model_id,
-                    "response_format": "json",
-                    "language": "en",
-                    "temperature": 0.0
-                }
+            # Handle both BytesIO (in-memory) and file paths
+            if hasattr(file_source, "read"):
+                # In-memory BytesIO buffer - read and create tuple
+                audio_data = file_source.read()
+                file_tuple = ("audio.wav", audio_data)
+                logger.info(f"Transcribing from memory buffer: {len(audio_data)} bytes")
+            else:
+                # File path - open and read
+                with open(file_source, "rb") as f:
+                    audio_data = f.read()
+                file_tuple = (file_source, audio_data)
+                logger.info(f"Transcribing from file: {file_source}")
+            
+            # Build transcription parameters
+            params = {
+                "file": file_tuple,
+                "model": model_id,
+                "response_format": "json",
+                "language": "en",
+                "temperature": 0.0
+            }
+            
+            # Add prompt if provided - helps with accuracy for:
+            # - Proper nouns and technical terms
+            # - Consistent punctuation and capitalization
+            # - Context from previous transcriptions
+            if prompt:
+                params["prompt"] = prompt
                 
-                # Add prompt if provided - helps with accuracy for:
-                # - Proper nouns and technical terms
-                # - Consistent punctuation and capitalization
-                # - Context from previous transcriptions
-                if prompt:
-                    params["prompt"] = prompt
-                    
-                transcription = self.client.audio.transcriptions.create(**params)
+            transcription = self.client.audio.transcriptions.create(**params)
             return transcription.text
         except APIStatusError as e:
             raise GroqClientError(f"API Error: {e.message}")

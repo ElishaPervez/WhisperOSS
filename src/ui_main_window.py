@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QCheckBox, QTextEdit, QLineEdit, QGroupBox, QInputDialog,
     QFrame, QGraphicsDropShadowEffect, QScrollArea, QSlider, QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QSize, pyqtProperty
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QSize, pyqtProperty, QEvent
 from PyQt6.QtGui import QFont, QColor, QPainter, QBrush, QPen, QLinearGradient, QRadialGradient
 
 
@@ -179,9 +179,15 @@ class MainWindow(QWidget):
         self.setWindowTitle("WhisperOSS Settings")
         self.resize(340, 480)
         
+        # Track if blur effect is active
+        self._blur_active = False
+        
         # Translucent Background
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint) # Optional: Frameless looks cleaner with translucent
+        
+        # Apply Windows Acrylic Blur Effect (Liquid Glass)
+        self._apply_blur_effect()
         
         self._setup_styling()
         
@@ -191,26 +197,71 @@ class MainWindow(QWidget):
 
         # Window dragging for frameless
         self.oldPos = self.pos()
+    
+    def _apply_blur_effect(self):
+        """Apply Windows DWM Acrylic blur effect after window is ready."""
+        try:
+            from src.window_effects import WindowEffect
+            self._window_effect = WindowEffect()
+            # Delay to ensure window handle exists, then apply and track result
+            def apply_and_track():
+                self._blur_active = self._window_effect.set_acrylic(self.winId())
+                if self._blur_active:
+                    self.update()  # Repaint without background
+            QTimer.singleShot(100, apply_and_track)
+        except ImportError:
+            pass  # Module not available
 
     def mousePressEvent(self, event):
-        self.oldPos = event.globalPosition().toPoint()
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.oldPos = event.globalPosition().toPoint()
+            self._dragging = True
+
+    def mouseReleaseEvent(self, event):
+        self._dragging = False
 
     def mouseMoveEvent(self, event):
-        delta = QPoint(event.globalPosition().toPoint() - self.oldPos)
-        self.move(self.x() + delta.x(), self.y() + delta.y())
-        self.oldPos = event.globalPosition().toPoint()
+        if hasattr(self, '_dragging') and self._dragging:
+            delta = QPoint(event.globalPosition().toPoint() - self.oldPos)
+            self.move(self.x() + delta.x(), self.y() + delta.y())
+            self.oldPos = event.globalPosition().toPoint()
+    
+    def eventFilter(self, obj, event):
+        """Handle drag events from header widget."""
+        if obj == getattr(self, '_header_widget', None):
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self.oldPos = event.globalPosition().toPoint()
+                    self._dragging = True
+                    return True
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                self._dragging = False
+                return True
+            elif event.type() == QEvent.Type.MouseMove:
+                if hasattr(self, '_dragging') and self._dragging:
+                    delta = QPoint(event.globalPosition().toPoint() - self.oldPos)
+                    self.move(self.x() + delta.x(), self.y() + delta.y())
+                    self.oldPos = event.globalPosition().toPoint()
+                    return True
+        return super().eventFilter(obj, event)
 
     def paintEvent(self, event):
-        # Draw the translucent background
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # White background with 80% opacity
-        bg_color = QColor(255, 255, 255, 215) # 215/255 approx 84%
-        painter.setBrush(QBrush(bg_color))
-        painter.setPen(QPen(QColor(0, 0, 0, 20), 1)) # Subtle border
-        
-        painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1), 20, 20)
+        if self._blur_active:
+            # When blur is active, draw a very subtle semi-transparent overlay
+            # This keeps the window clickable while showing the blur behind
+            bg_color = QColor(255, 255, 255, 30)  # Very low opacity to show blur
+            painter.setBrush(QBrush(bg_color))
+            painter.setPen(QPen(QColor(255, 255, 255, 40), 1))
+            painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1), 20, 20)
+        else:
+            # Fallback: White background with 80% opacity
+            bg_color = QColor(255, 255, 255, 215) # 215/255 approx 84%
+            painter.setBrush(QBrush(bg_color))
+            painter.setPen(QPen(QColor(0, 0, 0, 20), 1)) # Subtle border
+            painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1), 20, 20)
 
     def _setup_styling(self):
         self.setStyleSheet("""
@@ -297,8 +348,13 @@ class MainWindow(QWidget):
         layout.setSpacing(16)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        # Header: Title + Close Button
-        header_layout = QHBoxLayout()
+        # Header: Draggable area with Title + Close Button
+        header_widget = QWidget()
+        header_widget.setFixedHeight(40)
+        header_widget.setCursor(Qt.CursorShape.SizeAllCursor)  # Show drag cursor
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        
         title = QLabel("WhisperOSS")
         title.setObjectName("SectionTitle")
         header_layout.addWidget(title)
@@ -307,16 +363,14 @@ class MainWindow(QWidget):
         close_btn = QPushButton("×")
         close_btn.setObjectName("CloseBtn")
         close_btn.setFixedSize(24, 24)
-        # For a frameless window, 'close' might just minimize or hide
-        # But generally users expect X to close. 
-        # Since this is the main window, let's make it actually close app (or hide to tray if we had one)
-        # For now, let's just make it hide since the app runs in background? 
-        # Actually user said "remove the things marked with an X", didn't say make it a tray app.
-        # But to be safe with frameless, we need a close button.
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)  # Normal cursor for button
         close_btn.clicked.connect(self.close) 
         header_layout.addWidget(close_btn)
         
-        layout.addLayout(header_layout)
+        # Store reference and add the widget (not layout)
+        self._header_widget = header_widget
+        header_widget.installEventFilter(self)  # Enable dragging from header
+        layout.addWidget(header_widget)
 
         # --- Configuration Fields ---
 
