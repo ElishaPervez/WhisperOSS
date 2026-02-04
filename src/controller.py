@@ -130,38 +130,189 @@ class WhisperAppController(QObject):
         api_key = self.config.get("api_key", "")
         
         if not api_key or api_key.strip() == "":
-            # Show welcome message and prompt for API key
-            msg = QMessageBox()
-            msg.setWindowTitle("Welcome to WhisperOSS")
-            msg.setText("Welcome to WhisperOSS!\n\nThis app requires a Groq API key to transcribe audio.\nPlease enter your API key to continue.")
-            msg.setIcon(QMessageBox.Icon.Information)
-            msg.exec()
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+            from PyQt6.QtCore import Qt
+            from PyQt6.QtGui import QFont, QDesktopServices
+            from PyQt6.QtCore import QUrl
             
-            # Keep prompting until valid key or user cancels
-            while True:
-                text, ok = QInputDialog.getText(
-                    None, 
-                    "Groq API Key Required", 
-                    "Enter your Groq API Key:\n(Get one at https://console.groq.com)",
-                    text=""
-                )
+            dialog = QDialog()
+            dialog.setWindowTitle("Welcome to WhisperOSS")
+            dialog.setFixedWidth(520)
+            dialog.setStyleSheet("""
+                QDialog {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                        stop:0 #1a1a2e, stop:1 #16213e);
+                }
+                QLabel {
+                    color: #e8e8e8;
+                }
+                QLabel#title {
+                    font-size: 22px;
+                    font-weight: bold;
+                    color: #ffffff;
+                    padding: 10px 0;
+                }
+                QLabel#subtitle {
+                    font-size: 13px;
+                    color: #a0a0a0;
+                    padding-bottom: 15px;
+                }
+                QLabel#step {
+                    font-size: 13px;
+                    color: #e0e0e0;
+                    padding: 6px 0;
+                }
+                QLabel#stepNum {
+                    font-size: 13px;
+                    font-weight: bold;
+                    color: #4fc3f7;
+                    min-width: 24px;
+                }
+                QLabel#link {
+                    color: #4fc3f7;
+                    font-size: 13px;
+                }
+                QLabel#link:hover {
+                    color: #81d4fa;
+                }
+                QLineEdit {
+                    background: #0f0f1a;
+                    border: 2px solid #3a3a5c;
+                    border-radius: 8px;
+                    padding: 12px 15px;
+                    font-size: 14px;
+                    color: #ffffff;
+                }
+                QLineEdit:focus {
+                    border-color: #4fc3f7;
+                }
+                QLineEdit::placeholder {
+                    color: #666;
+                }
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #4fc3f7, stop:1 #29b6f6);
+                    border: none;
+                    border-radius: 8px;
+                    padding: 12px 30px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    color: #0a0a14;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #81d4fa, stop:1 #4fc3f7);
+                }
+                QPushButton:pressed {
+                    background: #29b6f6;
+                }
+                QPushButton#cancel {
+                    background: transparent;
+                    border: 2px solid #3a3a5c;
+                    color: #a0a0a0;
+                }
+                QPushButton#cancel:hover {
+                    border-color: #ff6b6b;
+                    color: #ff6b6b;
+                }
+            """)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(35, 30, 35, 30)
+            layout.setSpacing(8)
+            
+            # Title
+            title = QLabel("🎤 Welcome to WhisperOSS")
+            title.setObjectName("title")
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(title)
+            
+            # Subtitle
+            subtitle = QLabel("Free, open-source voice-to-text powered by Groq's Whisper API")
+            subtitle.setObjectName("subtitle")
+            subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            subtitle.setWordWrap(True)
+            layout.addWidget(subtitle)
+            
+            # Divider
+            layout.addSpacing(5)
+            
+            # Instructions header
+            instructions_header = QLabel("To get started, you'll need a free Groq API key:")
+            instructions_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff; padding: 10px 0 5px 0;")
+            layout.addWidget(instructions_header)
+            
+            # Steps
+            steps = [
+                ("1.", "Go to", "https://console.groq.com/keys", ""),
+                ("2.", "Log in or create a free account", "", ""),
+                ("3.", "Click", "", '"Create API Key"'),
+                ("4.", "Copy and paste the key below", "", ""),
+            ]
+            
+            for step_num, text, link, suffix in steps:
+                step_layout = QHBoxLayout()
+                step_layout.setContentsMargins(10, 0, 0, 0)
                 
-                if ok and text.strip():
-                    # Save the API key
-                    self.config.set("api_key", text.strip())
-                    self.config.save()
-                    break
-                elif not ok:
-                    # User cancelled - show warning and exit
-                    warn = QMessageBox()
-                    warn.setWindowTitle("API Key Required")
-                    warn.setText("WhisperOSS requires an API key to function.\nThe application will now exit.")
-                    warn.setIcon(QMessageBox.Icon.Warning)
-                    warn.exec()
-                    sys.exit(0)
+                num_label = QLabel(step_num)
+                num_label.setObjectName("stepNum")
+                num_label.setFixedWidth(25)
+                step_layout.addWidget(num_label)
+                
+                if link:
+                    step_text = QLabel(f'{text} <a href="{link}" style="color: #4fc3f7; text-decoration: none;">{link}</a>')
+                    step_text.setOpenExternalLinks(True)
+                elif suffix:
+                    step_text = QLabel(f'{text} <b style="color: #4fc3f7;">{suffix}</b>')
                 else:
-                    # Empty key entered, prompt again
-                    QMessageBox.warning(None, "Invalid Key", "Please enter a valid API key.")
+                    step_text = QLabel(text)
+                step_text.setObjectName("step")
+                step_layout.addWidget(step_text, 1)
+                
+                layout.addLayout(step_layout)
+            
+            layout.addSpacing(15)
+            
+            # API Key input
+            api_input = QLineEdit()
+            api_input.setPlaceholderText("Paste your Groq API key here...")
+            layout.addWidget(api_input)
+            
+            layout.addSpacing(20)
+            
+            # Buttons
+            btn_layout = QHBoxLayout()
+            btn_layout.setSpacing(15)
+            
+            cancel_btn = QPushButton("Exit")
+            cancel_btn.setObjectName("cancel")
+            cancel_btn.clicked.connect(dialog.reject)
+            btn_layout.addWidget(cancel_btn)
+            
+            continue_btn = QPushButton("Continue →")
+            continue_btn.clicked.connect(dialog.accept)
+            continue_btn.setDefault(True)
+            btn_layout.addWidget(continue_btn)
+            
+            layout.addLayout(btn_layout)
+            
+            # Show dialog and handle result
+            while True:
+                result = dialog.exec()
+                
+                if result == QDialog.DialogCode.Accepted:
+                    key = api_input.text().strip()
+                    if key:
+                        self.config.set("api_key", key)
+                        self.config.save()
+                        break
+                    else:
+                        # Clear and show error
+                        api_input.setStyleSheet(api_input.styleSheet() + "border-color: #ff6b6b;")
+                        api_input.setPlaceholderText("⚠️ Please enter a valid API key...")
+                else:
+                    # User cancelled
+                    sys.exit(0)
 
     def connect_signals(self):
         # UI -> Logic
