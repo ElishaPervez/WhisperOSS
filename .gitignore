@@ -16,3 +16,9 @@ config.json
 # IDEs
 .vscode/
 .idea/
+
+# Excluded folders
+.jules/
+conductor/
+Original implementation mockup/
+.coverage
