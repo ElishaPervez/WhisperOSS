@@ -1,5 +1,3 @@
-import random
-
 from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
@@ -7,8 +5,6 @@ from PyQt6.QtCore import (
     QEasingCurve,
     QTimer,
     QPoint,
-    QPointF,
-    QLineF,
     QSize,
     pyqtProperty,
     QEvent,
@@ -243,10 +239,9 @@ class MainWindow(QWidget):
         self._intro_animations = []
         self._dragging = False
         self.oldPos = self.pos()
+        self._initial_layout_applied = False
         self._appearance_mode = self._normalize_appearance_mode(self.config.get("appearance_mode", "auto"))
         self._is_dark_theme = self._resolve_dark_theme()
-        self._neon_phase = 0.0
-        self._neon_paths = []
 
         # Frameless layout keeps this feeling like a polished desktop app shell.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -258,10 +253,6 @@ class MainWindow(QWidget):
         self.is_recording = False
         self.setup_ui()
         self._init_ui_state()
-        self._rebuild_neon_paths()
-        self._neon_timer = QTimer(self)
-        self._neon_timer.timeout.connect(self._animate_neon)
-        self._neon_timer.start(33)
         self._play_intro_animation()
 
     def _apply_blur_effect(self):
@@ -299,90 +290,6 @@ class MainWindow(QWidget):
         base = palette.color(QPalette.ColorRole.Window)
         text = palette.color(QPalette.ColorRole.WindowText)
         return base.lightness() < text.lightness()
-
-    def _animate_neon(self):
-        self._neon_phase = (self._neon_phase + 0.008) % 1.0
-        self.update()
-
-    def _rebuild_neon_paths(self):
-        width = self.width()
-        height = self.height()
-        if width < 240 or height < 240:
-            self._neon_paths = []
-            return
-
-        rng = random.Random((width * 73856093) ^ (height * 19349663) ^ 0x4EE4)
-        margin = 24
-        left = float(margin)
-        right = float(max(margin + 2, width - margin))
-        top = float(margin + 44)
-        bottom = float(max(margin + 2, height - margin))
-        span_x = max(40.0, right - left)
-        span_y = max(40.0, bottom - top)
-
-        traces = []
-
-        # Horizontal "circuit lanes"
-        for _ in range(8):
-            y = rng.uniform(top, bottom)
-            x1 = rng.uniform(left, left + span_x * 0.32)
-            x2 = min(right, x1 + rng.uniform(span_x * 0.22, span_x * 0.56))
-            y2 = y + rng.uniform(-26.0, 26.0)
-            traces.append((QLineF(QPointF(x1, y), QPointF(x2, y2)), rng.random(), rng.uniform(0.40, 1.00)))
-
-        # Vertical "circuit lanes"
-        for _ in range(8):
-            x = rng.uniform(left, right)
-            y1 = rng.uniform(top, top + span_y * 0.34)
-            y2 = min(bottom, y1 + rng.uniform(span_y * 0.20, span_y * 0.52))
-            x2 = x + rng.uniform(-22.0, 22.0)
-            traces.append((QLineF(QPointF(x, y1), QPointF(x2, y2)), rng.random(), rng.uniform(0.35, 0.95)))
-
-        # Edge loops around the shell.
-        traces.extend(
-            [
-                (QLineF(QPointF(left + 12, top + 6), QPointF(right - 16, top + 18)), rng.random(), 0.62),
-                (QLineF(QPointF(right - 14, top + 18), QPointF(right - 6, bottom - 24)), rng.random(), 0.51),
-                (QLineF(QPointF(right - 22, bottom - 18), QPointF(left + 24, bottom - 8)), rng.random(), 0.57),
-                (QLineF(QPointF(left + 8, bottom - 20), QPointF(left + 16, top + 28)), rng.random(), 0.48),
-            ]
-        )
-
-        self._neon_paths = traces
-
-    def _paint_neon_traces(self, painter):
-        if not self._neon_paths:
-            return
-
-        if self._is_dark_theme:
-            trace_color = QColor(34, 197, 94, 64)
-            pulse_inner = QColor(134, 239, 172, 165)
-            pulse_mid = QColor(22, 163, 74, 84)
-            radius = 22
-        else:
-            trace_color = QColor(22, 163, 74, 36)
-            pulse_inner = QColor(34, 197, 94, 110)
-            pulse_mid = QColor(22, 163, 74, 56)
-            radius = 18
-
-        trace_pen = QPen(trace_color, 1.2)
-        trace_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-
-        for line, offset, speed in self._neon_paths:
-            painter.setPen(trace_pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawLine(line)
-
-            travel = (self._neon_phase * speed + offset) % 1.0
-            pulse_point = line.pointAt(travel)
-
-            glow = QRadialGradient(pulse_point, radius)
-            glow.setColorAt(0.0, pulse_inner)
-            glow.setColorAt(0.45, pulse_mid)
-            glow.setColorAt(1.0, QColor(16, 185, 129, 0))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(glow))
-            painter.drawEllipse(pulse_point, float(radius), float(radius))
 
     def _refresh_theme_widgets(self):
         for widget in (self.status_label, self.api_key_hint):
@@ -1190,12 +1097,23 @@ class MainWindow(QWidget):
                 self._is_dark_theme = refreshed_dark_mode
                 self._setup_styling()
                 self._refresh_theme_widgets()
-                self._rebuild_neon_paths()
                 self.update()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._rebuild_neon_paths()
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._initial_layout_applied:
+            self._initial_layout_applied = True
+            QTimer.singleShot(0, self._ensure_initial_layout)
+
+    def _ensure_initial_layout(self):
+        layout = self.layout()
+        if layout is None:
+            return
+
+        layout.activate()
+        target_height = max(self.minimumHeight(), layout.sizeHint().height() + 2, self.height())
+        if target_height != self.height():
+            self.resize(self.width(), target_height)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1228,8 +1146,6 @@ class MainWindow(QWidget):
         shell_rect = self.rect().adjusted(1, 1, -1, -1)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(shell_rect, 24, 24)
-
-        self._paint_neon_traces(painter)
 
         painter.setPen(QPen(border_color, 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -1312,7 +1228,6 @@ class MainWindow(QWidget):
         self._is_dark_theme = self._resolve_dark_theme()
         self._setup_styling()
         self._refresh_theme_widgets()
-        self._rebuild_neon_paths()
         self.update()
 
     def on_api_key_toggle_visibility(self):
