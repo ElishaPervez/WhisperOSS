@@ -8,6 +8,7 @@ from PyQt6.QtCore import (
     QTimer,
     QPoint,
     QPointF,
+    QRectF,
     QLineF,
     QSize,
     pyqtProperty,
@@ -247,6 +248,7 @@ class MainWindow(QWidget):
         self._is_dark_theme = self._resolve_dark_theme()
         self._neon_phase = 0.0
         self._neon_paths = []
+        self._aurora_orbs = []
 
         # Frameless layout keeps this feeling like a polished desktop app shell.
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -309,6 +311,7 @@ class MainWindow(QWidget):
         height = self.height()
         if width < 240 or height < 240:
             self._neon_paths = []
+            self._aurora_orbs = []
             return
 
         rng = random.Random((width * 73856093) ^ (height * 19349663) ^ 0x4EE4)
@@ -350,6 +353,18 @@ class MainWindow(QWidget):
 
         self._neon_paths = traces
 
+        self._aurora_orbs = []
+        for _ in range(9):
+            self._aurora_orbs.append(
+                {
+                    "x": rng.uniform(left, right),
+                    "y": rng.uniform(top, bottom),
+                    "radius": rng.uniform(80.0, 170.0),
+                    "speed": rng.uniform(0.08, 0.26),
+                    "offset": rng.random(),
+                }
+            )
+
     def _paint_neon_traces(self, painter):
         if not self._neon_paths:
             return
@@ -383,6 +398,34 @@ class MainWindow(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(glow))
             painter.drawEllipse(pulse_point, float(radius), float(radius))
+
+    def _paint_aurora_orbs(self, painter):
+        if not self._aurora_orbs:
+            return
+
+        if self._is_dark_theme:
+            inner = QColor(56, 189, 248, 50)
+            mid = QColor(16, 185, 129, 28)
+        else:
+            inner = QColor(59, 130, 246, 34)
+            mid = QColor(20, 184, 166, 22)
+
+        import math
+
+        for orb in self._aurora_orbs:
+            drift_phase = (self._neon_phase + orb["offset"]) * math.tau
+            x = orb["x"] + math.sin(drift_phase * orb["speed"] * 3.8) * 24.0
+            y = orb["y"] + math.cos(drift_phase * orb["speed"] * 4.4) * 18.0
+            radius = orb["radius"]
+
+            glow = QRadialGradient(QPointF(x, y), radius)
+            glow.setColorAt(0.0, inner)
+            glow.setColorAt(0.62, mid)
+            glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(glow))
+            painter.drawEllipse(QRectF(x - radius, y - radius, radius * 2.0, radius * 2.0))
 
     def _refresh_theme_widgets(self):
         for widget in (self.status_label, self.api_key_hint):
@@ -864,6 +907,15 @@ class MainWindow(QWidget):
         hotkey_note.setObjectName("MutedText")
         hero_layout.addWidget(hotkey_note)
 
+        self.record_button = PulsingRecordButton()
+        self.record_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.record_button.clicked.connect(lambda checked: self.record_toggled.emit(bool(checked)))
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        button_row.addWidget(self.record_button)
+        button_row.addStretch()
+        hero_layout.addLayout(button_row)
+
         hero_layout.addStretch()
 
         left_layout.addWidget(self.hero_card)
@@ -1087,6 +1139,14 @@ class MainWindow(QWidget):
 
             QTimer.singleShot(index * 70, animation.start)
 
+            rise = QPropertyAnimation(target, b"pos", self)
+            rise.setDuration(320)
+            rise.setStartValue(target.pos() + QPoint(0, 12))
+            rise.setEndValue(target.pos())
+            rise.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._intro_animations.append(rise)
+            QTimer.singleShot(index * 70, rise.start)
+
     def _set_status_badge(self, text, state):
         self.status_label.setText(text)
         self.status_label.setProperty("state", state)
@@ -1229,6 +1289,7 @@ class MainWindow(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(shell_rect, 24, 24)
 
+        self._paint_aurora_orbs(painter)
         self._paint_neon_traces(painter)
 
         painter.setPen(QPen(border_color, 1))
@@ -1238,6 +1299,10 @@ class MainWindow(QWidget):
     # Event handlers
     def set_recording_state(self, is_recording):
         self.is_recording = is_recording
+        self.record_button.blockSignals(True)
+        self.record_button.setChecked(is_recording)
+        self.record_button.setRecording(is_recording)
+        self.record_button.blockSignals(False)
 
         if is_recording:
             self.record_headline.setText("Listening...")

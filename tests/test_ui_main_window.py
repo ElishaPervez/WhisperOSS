@@ -89,6 +89,21 @@ def test_animated_toggle_paint(qtbot):
     toggle.handle_position = 10.0
     assert toggle.handle_position == 10.0
 
+
+def test_record_button_toggles_recording_signal(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+
+    with qtbot.waitSignal(window.record_toggled) as blocker:
+        window.record_button.click()
+
+    assert blocker.args[0] is True
+    assert window.record_button.text() == "START"
+
+    window.set_recording_state(True)
+    assert window.record_button.isChecked() is True
+    assert window.record_button.text() == "STOP"
+
 def test_set_model_list(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
