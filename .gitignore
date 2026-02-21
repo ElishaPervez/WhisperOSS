@@ -8,6 +8,17 @@ env/
 venv/
 .env
 
+# Build / Distribution
+dist/
+build/
+*.egg-info/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tmp/
+
 # Application Specific
 config.json
 .whispeross/
@@ -17,8 +28,8 @@ config.json
 .vscode/
 .idea/
 
-# Excluded folders
+# AI Assistants
+.gemini/
+.claude/
 .jules/
-conductor/
-Original implementation mockup/
-.coverage
+gha-creds-*.json

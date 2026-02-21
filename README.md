@@ -27,8 +27,29 @@ A blazing fast, AI-powered voice typing application for Windows that feels nativ
 3.  **Record**: Hold `Ctrl + Win` (default) to record. Release to transcribe.
 4.  **Tray Icon**: The app runs in the background. Check the system tray to access settings.
 
+## 🖥️ Desktop Build + Installer (Windows)
+WhisperOSS is a native `PyQt6` desktop app. To create an installable Windows package:
+
+1. Install build tools:
+   ```bash
+   pip install pyinstaller
+   ```
+2. Install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and ensure `iscc.exe` is available in `PATH`.
+3. Build app bundle + installer:
+   ```bash
+   build_installer.bat 0.1.0
+   ```
+
+Outputs:
+- App bundle: `dist/WhisperOSS/`
+- Installer: `dist/installer/WhisperOSS-Setup-<version>.exe`
+
 ## 📂 Configuration
 Your settings (API Key, Mic Device, Formatting preferences) are saved in `%APPDATA%\WhisperOSS\config.json`.
+
+Security note:
+- API keys are stored in OS secure credential storage (Windows Credential Manager via `keyring`) when available.
+- Legacy plaintext keys in `config.json` are auto-migrated on startup.
 
 ## 🧪 Development
 Run the full test suite (now 100% passing) with:

@@ -51,7 +51,8 @@ def test_controller_init(app, mock_deps):
     mock_deps["config"].get.assert_called()
     mock_deps["groq"].check_connection.assert_called() # refresh_models called
     mock_deps["recorder"].list_devices.assert_called()
-    mock_deps["window"].show.assert_called()
+    # Controller launches with the main window visible.
+    mock_deps["window"].show.assert_called_once()
 
 def test_toggle_recording(app, mock_deps):
     controller = WhisperAppController()
@@ -103,3 +104,47 @@ def test_on_transcription_complete(app, mock_deps):
         # Use assert_any_call because copy is called twice (text + restore)
         mock_copy.assert_any_call("final")
         mock_send.assert_called_with('ctrl+v')
+
+def test_on_config_changed_api_key_valid(app, mock_deps):
+    controller = WhisperAppController()
+    mock_deps["config"].set.reset_mock()
+    mock_deps["config"].save.reset_mock()
+    mock_deps["groq"].update_api_key.reset_mock()
+
+    with patch.object(controller, "_validate_groq_api_key", return_value=(True, "", "", "info")):
+        controller.on_config_changed("api_key", "gsk_new_valid")
+
+    mock_deps["config"].set.assert_any_call("api_key", "gsk_new_valid")
+    mock_deps["config"].save.assert_called()
+    mock_deps["groq"].update_api_key.assert_called_once_with("gsk_new_valid")
+    mock_deps["window"].set_api_key_validation_result.assert_called_with(True, "API key validated and saved.")
+
+def test_on_config_changed_api_key_invalid(app, mock_deps):
+    controller = WhisperAppController()
+    mock_deps["config"].set.reset_mock()
+    mock_deps["config"].save.reset_mock()
+    mock_deps["groq"].update_api_key.reset_mock()
+
+    with patch.object(
+        controller,
+        "_validate_groq_api_key",
+        return_value=(False, "Groq rejected this key", "The provided API key is invalid.", "error"),
+    ):
+        controller.on_config_changed("api_key", "bad_key")
+
+    mock_deps["config"].set.assert_not_called()
+    mock_deps["config"].save.assert_not_called()
+    mock_deps["groq"].update_api_key.assert_not_called()
+    mock_deps["window"].set_api_key_validation_result.assert_called_with(False, "The provided API key is invalid.")
+
+def test_show_window_after_setup_complete(app, mock_deps):
+    with patch.object(WhisperAppController, "_check_first_run_api_key", autospec=True) as mock_setup:
+        def mark_setup_complete(controller):
+            controller._show_window_after_setup = True
+
+        mock_setup.side_effect = mark_setup_complete
+        WhisperAppController()
+
+    mock_deps["window"].show.assert_called_once()
+    mock_deps["window"].raise_.assert_called_once()
+    mock_deps["window"].activateWindow.assert_called_once()

@@ -28,10 +28,10 @@ def test_translation_ui_elements(app, qtbot, mock_config):
     
     assert hasattr(window, "translation_toggle")
     assert hasattr(window, "language_input")
-    assert hasattr(window, "save_btn")
+    assert hasattr(window, "status_label")  # Replaced save_btn with status label
     
     assert window.translation_toggle.isChecked() is False
-    assert window.language_input.text() == "Spanish"
+    assert window.language_input.currentText() == "Spanish"
 
 def test_translation_dependency_on_formatter(app, qtbot, mock_config):
     window = MainWindow(mock_config)
@@ -54,19 +54,15 @@ def test_save_settings_logic(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     
-    # Change values in UI
+    # Reset save mock from init
+    mock_config.save.reset_mock()
+    
+    # Change values in UI - auto-save should fire immediately
     window.translation_toggle.setChecked(True)
-    window.language_input.setText("Urdu")
-    
-    # Verify session config updated immediately
     mock_config.set.assert_any_call("translation_enabled", True)
+    mock_config.save.assert_called()  # Auto-save fires on toggle
+    
+    mock_config.save.reset_mock()
+    window.language_input.setCurrentText("Urdu")
     mock_config.set.assert_any_call("target_language", "Urdu")
-    
-    # Verify NO save call yet
-    mock_config.save.assert_not_called()
-    
-    # Click SAVE
-    qtbot.mouseClick(window.save_btn, Qt.MouseButton.LeftButton)
-    
-    # Verify disk save called
-    mock_config.save.assert_called_once()
+    mock_config.save.assert_called()  # Auto-save fires on text change

@@ -97,6 +97,37 @@ class WindowEffect:
             logger.error(f"Failed to apply acrylic blur: {e}")
             return False
     
+    def set_rounded_corners(self, hwnd):
+        """
+        Enable native Windows 11 rounded corners via DWM.
+        This is required when using acrylic/blur effects, because
+        SetWindowRgn does not clip DWM compositor effects.
+        """
+        if not self._is_windows:
+            return False
+
+        try:
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWCP_ROUND = 2  # Standard rounded corners
+
+            dwmapi = ctypes.windll.dwmapi
+            preference = c_int(DWMWCP_ROUND)
+            result = dwmapi.DwmSetWindowAttribute(
+                int(hwnd),
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                byref(preference),
+                ctypes.sizeof(preference),
+            )
+            if result == 0:  # S_OK
+                logger.info("DWM rounded corners enabled")
+                return True
+            else:
+                logger.warning(f"DwmSetWindowAttribute returned HRESULT {result:#010x}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to set rounded corners: {e}")
+            return False
+
     def set_blur_behind(self, hwnd):
         """
         Apply standard blur behind effect (Windows 10 compatible).

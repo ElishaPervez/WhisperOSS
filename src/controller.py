@@ -5,8 +5,11 @@ import ctypes
 import keyboard
 import pyperclip
 import logging
-from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu, QInputDialog
-from PyQt6.QtCore import QThread, pyqtSignal, QObject
+import io
+from typing import Optional, Any
+from groq import Groq as GroqRaw, AuthenticationError as GroqAuthError, APIConnectionError as GroqConnError
+from PyQt6.QtWidgets import QApplication, QDialog, QSystemTrayIcon, QMenu
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QIcon, QAction, QCursor
 
 
@@ -15,7 +18,9 @@ from src.audio_recorder import AudioRecorder
 from src.groq_client import GroqClient
 from src.hotkey_manager import HotkeyManager
 from src.ui_main_window import MainWindow
+from src.ui_onboarding import SetupMessageDialog, ApiKeyInputDialog
 from src.ui_visualizer import AudioVisualizer
+from src.services.groq_service import TranscriptionWorker, SearchWorker
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -34,90 +39,61 @@ def get_active_window_title() -> str:
         logger.debug(f"Could not get active window title: {e}")
     return ""
 
-# Worker Thread for API calls to prevent UI freezing
-class TranscriptionWorker(QThread):
-    finished = pyqtSignal(str, str) # raw_text, final_text
-    error = pyqtSignal(str)
-
-    def __init__(self, groq_client, audio_file, use_formatter, format_model, 
-                 use_translation=False, target_language="English", formatting_style="Default",
-                 active_context=""):
-        super().__init__()
-        self.groq_client = groq_client
-        self.audio_file = audio_file
-        self.use_formatter = use_formatter
-        self.format_model = format_model
-        self.use_translation = use_translation
-        self.target_language = target_language
-        self.formatting_style = formatting_style
-        self.active_context = active_context
-
-    def run(self):
-        try:
-            # Step 1: Transcribe with prompt for better accuracy
-            from src.prompts import TRANSCRIPTION_PROMPT
-            raw_text = self.groq_client.transcribe(self.audio_file, prompt=TRANSCRIPTION_PROMPT)
-            final_text = raw_text
-
-            # Step 2: Format / Translate (Optional)
-            if self.use_formatter:
-                if self.use_translation:
-                    from src.prompts import SYSTEM_PROMPT_TRANSLATOR
-                    prompt = SYSTEM_PROMPT_TRANSLATOR.format(language=self.target_language)
-                    logger.info(f"Using Translator Prompt for language: {self.target_language}")
-                    formatted = self.groq_client.format_text(raw_text, self.format_model, system_prompt=prompt)
-                else:
-                    from src.prompts import get_formatter_prompt
-                    prompt = get_formatter_prompt(self.formatting_style)
-                    # Inject context intelligence if available
-                    if self.active_context:
-                        prompt += f"\n\nContext: The user is currently typing in '{self.active_context}'. Adjust formatting accordingly."
-                    logger.info(f"Using Formatter Prompt for style: {self.formatting_style}, context: {self.active_context or 'None'}")
-                    formatted = self.groq_client.format_text(raw_text, self.format_model, system_prompt=prompt)
-                
-                final_text = formatted
-
-            self.finished.emit(raw_text, final_text)
-
-        except Exception as e:
-            logger.error(f"TranscriptionWorker error: {e}")
-            self.error.emit(str(e))
-
 class WhisperAppController(QObject):
     # Thread-safe signals for hotkey events
     _start_recording_signal = pyqtSignal()
     _stop_recording_signal = pyqtSignal()
-    
+
+    # New signals for search mode
+    _start_search_signal = pyqtSignal()
+    _stop_search_signal = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False) # Keep running for system tray
 
+        self.recording_mode = "transcribe" # "transcribe" or "search"
+        self._show_window_after_setup = False
+
         # Load config first
         self.config = ConfigManager()
-        
+
         # Connect hotkey signals to recording actions (thread-safe)
-        self._start_recording_signal.connect(lambda: self.set_recording(True))
+        self._start_recording_signal.connect(lambda: self.set_recording(True, "transcribe"))
         self._stop_recording_signal.connect(lambda: self.set_recording(False))
-        
+
+        self._start_search_signal.connect(lambda: self.set_recording(True, "search"))
+        self._stop_search_signal.connect(lambda: self.set_recording(False))
+
         # Check for first run (no API key) and prompt before initializing
         self._check_first_run_api_key()
         self.groq = GroqClient(self.config.get("api_key"))
         self.recorder = AudioRecorder(self.config.get("input_device_index"))
+
+        # Standard Hotkey: Ctrl+Win (Transcribe)
         self.hotkey_mgr = HotkeyManager(
             modifiers=['ctrl'],
             trigger_key='win',
             on_start=self._start_recording_signal.emit,
             on_stop=self._stop_recording_signal.emit
         )
-        
+
+        # Search Hotkey: Win+Ctrl (Quick Answer)
+        self.search_hotkey = HotkeyManager(
+            modifiers=['win'], # Logic handles left/right windows
+            trigger_key='ctrl',
+            on_start=self._start_search_signal.emit,
+            on_stop=self._stop_search_signal.emit
+        )
+
         # UI
         self.window = MainWindow(self.config)
         self.visualizer = AudioVisualizer()
-        
+
         # System Tray
         self.setup_system_tray()
-        
+
         # Override window close to minimize to tray
         self.window.closeEvent = self.on_window_close
 
@@ -125,229 +101,143 @@ class WhisperAppController(QObject):
         self.connect_signals()
         self.init_state()
 
-    def _check_first_run_api_key(self):
-        """Prompt for API key on first run before full initialization"""
-        api_key = self.config.get("api_key", "")
-        
-        if not api_key or api_key.strip() == "":
-            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
-            from PyQt6.QtCore import Qt
-            from PyQt6.QtGui import QFont, QDesktopServices
-            from PyQt6.QtCore import QUrl
-            
-            dialog = QDialog()
-            dialog.setWindowTitle("Welcome to WhisperOSS")
-            dialog.setFixedWidth(520)
-            dialog.setStyleSheet("""
-                QDialog {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                        stop:0 #1a1a2e, stop:1 #16213e);
-                }
-                QLabel {
-                    color: #e8e8e8;
-                }
-                QLabel#title {
-                    font-size: 22px;
-                    font-weight: bold;
-                    color: #ffffff;
-                    padding: 10px 0;
-                }
-                QLabel#subtitle {
-                    font-size: 13px;
-                    color: #a0a0a0;
-                    padding-bottom: 15px;
-                }
-                QLabel#step {
-                    font-size: 13px;
-                    color: #e0e0e0;
-                    padding: 6px 0;
-                }
-                QLabel#stepNum {
-                    font-size: 13px;
-                    font-weight: bold;
-                    color: #4fc3f7;
-                    min-width: 24px;
-                }
-                QLabel#link {
-                    color: #4fc3f7;
-                    font-size: 13px;
-                }
-                QLabel#link:hover {
-                    color: #81d4fa;
-                }
-                QLineEdit {
-                    background: #0f0f1a;
-                    border: 2px solid #3a3a5c;
-                    border-radius: 8px;
-                    padding: 12px 15px;
-                    font-size: 14px;
-                    color: #ffffff;
-                }
-                QLineEdit:focus {
-                    border-color: #4fc3f7;
-                }
-                QLineEdit::placeholder {
-                    color: #666;
-                }
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                        stop:0 #4fc3f7, stop:1 #29b6f6);
-                    border: none;
-                    border-radius: 8px;
-                    padding: 12px 30px;
-                    font-size: 14px;
-                    font-weight: bold;
-                    color: #0a0a14;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                        stop:0 #81d4fa, stop:1 #4fc3f7);
-                }
-                QPushButton:pressed {
-                    background: #29b6f6;
-                }
-                QPushButton#cancel {
-                    background: transparent;
-                    border: 2px solid #3a3a5c;
-                    color: #a0a0a0;
-                }
-                QPushButton#cancel:hover {
-                    border-color: #ff6b6b;
-                    color: #ff6b6b;
-                }
-            """)
-            
-            layout = QVBoxLayout(dialog)
-            layout.setContentsMargins(35, 30, 35, 30)
-            layout.setSpacing(8)
-            
-            # Title
-            title = QLabel("🎤 Welcome to WhisperOSS")
-            title.setObjectName("title")
-            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(title)
-            
-            # Subtitle
-            subtitle = QLabel("Free, open-source voice-to-text powered by Groq's Whisper API")
-            subtitle.setObjectName("subtitle")
-            subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            subtitle.setWordWrap(True)
-            layout.addWidget(subtitle)
-            
-            # Divider
-            layout.addSpacing(5)
-            
-            # Instructions header
-            instructions_header = QLabel("To get started, you'll need a free Groq API key:")
-            instructions_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff; padding: 10px 0 5px 0;")
-            layout.addWidget(instructions_header)
-            
-            # Steps
-            steps = [
-                ("1.", "Go to", "https://console.groq.com/keys", ""),
-                ("2.", "Log in or create a free account", "", ""),
-                ("3.", "Click", "", '"Create API Key"'),
-                ("4.", "Copy and paste the key below", "", ""),
-            ]
-            
-            for step_num, text, link, suffix in steps:
-                step_layout = QHBoxLayout()
-                step_layout.setContentsMargins(10, 0, 0, 0)
-                
-                num_label = QLabel(step_num)
-                num_label.setObjectName("stepNum")
-                num_label.setFixedWidth(25)
-                step_layout.addWidget(num_label)
-                
-                if link:
-                    step_text = QLabel(f'{text} <a href="{link}" style="color: #4fc3f7; text-decoration: none;">{link}</a>')
-                    step_text.setOpenExternalLinks(True)
-                elif suffix:
-                    step_text = QLabel(f'{text} <b style="color: #4fc3f7;">{suffix}</b>')
-                else:
-                    step_text = QLabel(text)
-                step_text.setObjectName("step")
-                step_layout.addWidget(step_text, 1)
-                
-                layout.addLayout(step_layout)
-            
-            layout.addSpacing(15)
-            
-            # API Key input
-            api_input = QLineEdit()
-            api_input.setPlaceholderText("Paste your Groq API key here...")
-            layout.addWidget(api_input)
-            
-            layout.addSpacing(20)
-            
-            # Buttons
-            btn_layout = QHBoxLayout()
-            btn_layout.setSpacing(15)
-            
-            cancel_btn = QPushButton("Exit")
-            cancel_btn.setObjectName("cancel")
-            cancel_btn.clicked.connect(dialog.reject)
-            btn_layout.addWidget(cancel_btn)
-            
-            continue_btn = QPushButton("Continue →")
-            continue_btn.clicked.connect(dialog.accept)
-            continue_btn.setDefault(True)
-            btn_layout.addWidget(continue_btn)
-            
-            layout.addLayout(btn_layout)
-            
-            # Show dialog and handle result
-            while True:
-                result = dialog.exec()
-                
-                if result == QDialog.DialogCode.Accepted:
-                    key = api_input.text().strip()
-                    if key:
-                        self.config.set("api_key", key)
-                        self.config.save()
-                        break
-                    else:
-                        # Clear and show error
-                        api_input.setStyleSheet(api_input.styleSheet() + "border-color: #ff6b6b;")
-                        api_input.setPlaceholderText("⚠️ Please enter a valid API key...")
-                else:
-                    # User cancelled
-                    sys.exit(0)
+        self.worker: Optional[QObject] = None
 
-    def connect_signals(self):
+    def _check_first_run_api_key(self) -> None:
+        """Prompt for API key on first run, validating against the Groq API."""
+        api_key = self.config.get("api_key", "")
+
+        if not api_key or api_key.strip() == "":
+            welcome = SetupMessageDialog(
+                title="Welcome to WhisperOSS",
+                heading="Welcome to WhisperOSS",
+                body=(
+                    "Before you start dictating, connect a Groq API key. "
+                    "You can create one in the Groq Console in under a minute."
+                ),
+                severity="info",
+                primary_text="Continue",
+                secondary_text="Exit",
+            )
+            if welcome.exec() != int(QDialog.DialogCode.Accepted):
+                sys.exit(0)
+
+            # Keep prompting until valid key or user exits.
+            previous_input = ""
+            while True:
+                key_dialog = ApiKeyInputDialog(initial_key=previous_input)
+                if key_dialog.exec() != int(QDialog.DialogCode.Accepted):
+                    confirm_exit = SetupMessageDialog(
+                        title="API Key Required",
+                        heading="WhisperOSS needs an API key",
+                        body=(
+                            "Transcription cannot run without a Groq API key. "
+                            "Exit now or go back to paste your key."
+                        ),
+                        severity="warning",
+                        primary_text="Exit App",
+                        secondary_text="Back",
+                    )
+                    if confirm_exit.exec() == int(QDialog.DialogCode.Accepted):
+                        sys.exit(0)
+                    continue
+
+                entered_key = key_dialog.api_key()
+                previous_input = entered_key
+
+                is_valid, error_heading, error_message, severity = self._validate_groq_api_key(entered_key)
+                if not is_valid:
+                    SetupMessageDialog(
+                        title="API Key Validation Failed",
+                        heading=error_heading,
+                        body=error_message,
+                        severity=severity,
+                    ).exec()
+                    continue
+
+                self.config.set("api_key", entered_key)
+                self.config.save()
+                self._show_window_after_setup = True
+                logger.info("API key validated and saved successfully.")
+                break
+
+    def _validate_groq_api_key(self, api_key: str) -> tuple[bool, str, str, str]:
+        """Validate API key by calling an authenticated Groq endpoint."""
+        normalized_key = (api_key or "").strip()
+        if not normalized_key:
+            return False, "Missing API key", "Enter a valid Groq API key.", "error"
+
+        try:
+            test_client = GroqRaw(api_key=normalized_key)
+            test_client.models.list()
+            return True, "", "", "info"
+        except GroqAuthError:
+            return (
+                False,
+                "Groq rejected this key",
+                "The provided API key is invalid. Paste a valid key from console.groq.com.",
+                "error",
+            )
+        except GroqConnError:
+            return (
+                False,
+                "Could not reach Groq",
+                "Network connection failed while validating the key. Check connectivity and retry.",
+                "warning",
+            )
+        except Exception as exc:
+            return (
+                False,
+                "Could not validate the key",
+                f"{exc}",
+                "warning",
+            )
+
+    def connect_signals(self) -> None:
         # UI -> Logic
         self.window.record_toggled.connect(self.set_recording)
         self.window.config_changed.connect(self.on_config_changed)
-        
+
         # Recorder -> Floating visualizer overlay
         self.recorder.visualizer_update.connect(self.visualizer.update_level)
+        self.recorder.visualizer_update.connect(self.window.update_visualizer_level)
         self.recorder.recording_finished.connect(self.start_transcription)
         self.recorder.error_occurred.connect(self.show_error)
 
-    def init_state(self):
+    def init_state(self) -> None:
         # Populate Devices
         devices = self.recorder.list_devices()
         self.window.set_device_list(devices)
 
         # Populate Models (Async preferred but sync for init is ok)
         self.refresh_models()
-        
-        # Start global listener
+
+        # Start global listeners
         self.hotkey_mgr.start_listening()
+        self.search_hotkey.start_listening()
 
-        # Show Windows
-        self.window.show()
-        # self.visualizer.show() # Hidden by default, shown on record
-        # Visualizer positioning is now dynamic based on cursor location
+        # Always open visible on startup instead of tray-only.
+        self.show_window()
 
-    def on_config_changed(self, key, value):
+    def on_config_changed(self, key: str, value: Any) -> None:
         if key == "api_key":
-            self.groq.update_api_key(value)
+            new_key = str(value).strip()
+            is_valid, heading, message, _ = self._validate_groq_api_key(new_key)
+            if not is_valid:
+                self.window.set_api_key_validation_result(False, message)
+                self.window._set_error_status("API Key Invalid / Missing")
+                logger.warning(f"Rejected API key update: {heading}")
+                return
+
+            self.config.set("api_key", new_key)
+            self.config.save()
+            self.groq.update_api_key(new_key)
             self.refresh_models()
+            self.window.set_api_key_validation_result(True, "API key validated and saved.")
         elif key == "input_device_index":
             self.recorder.update_device(value)
 
-    def refresh_models(self):
+    def refresh_models(self) -> None:
         # In a real app, do this async
         if self.groq.check_connection():
             _, llm_models = self.groq.list_models()
@@ -359,16 +249,17 @@ class WhisperAppController(QObject):
         else:
             self.window._set_error_status("API Key Invalid / Missing")
 
-    def toggle_recording(self):
-        # Toggle state
+    def toggle_recording(self) -> None:
+        # Toggle state - Defaults to standard transcription mode if toggled via UI
         is_rec = not self.recorder.is_recording
-        self.set_recording(is_rec)
+        self.set_recording(is_rec, "transcribe")
 
-    def set_recording(self, recording):
+    def set_recording(self, recording: bool, mode: str="transcribe") -> None:
         # Update UI state (thread-safe signal)
         self.window.set_recording_state(recording)
-        
+
         if recording:
+            self.recording_mode = mode
             # Show first, then position - some window systems reset position during show()
             self.visualizer.show()
             self._position_visualizer_at_cursor()
@@ -376,64 +267,85 @@ class WhisperAppController(QObject):
         else:
             self.visualizer.hide()
             self.recorder.stop_recording()
-    
-    def _position_visualizer_at_cursor(self):
+
+
+
+    def _position_visualizer_at_cursor(self) -> None:
         """Position the visualizer at center-bottom of the screen where the cursor is located."""
         cursor_pos = QCursor.pos()
-        
+
         # Find which screen contains the cursor
         screen = self.app.screenAt(cursor_pos)
         if screen is None:
             screen = self.app.primaryScreen()
-        
+
         screen_geo = screen.geometry()
         vis_width = self.visualizer.width()
         vis_height = self.visualizer.height()
-        
+
         # Center horizontally on that screen, position near bottom
         x = screen_geo.x() + (screen_geo.width() - vis_width) // 2
         y = screen_geo.y() + screen_geo.height() - vis_height - 60  # 60px from bottom for taskbar
-        
+
         # Clamp to ensure visualizer stays within this screen's bounds
         x = max(screen_geo.x(), min(x, screen_geo.x() + screen_geo.width() - vis_width))
         y = max(screen_geo.y(), min(y, screen_geo.y() + screen_geo.height() - vis_height))
-        
+
         logger.info(f"Cursor at: {cursor_pos.x()}, {cursor_pos.y()}")
         logger.info(f"Screen: {screen.name()} - Geometry: {screen_geo}")
         logger.info(f"Positioning visualizer at: ({x}, {y})")
-        
+
         # Move and then explicitly set the position to ensure it sticks
         self.visualizer.move(x, y)
 
-    def start_transcription(self, audio_source):
+    def start_transcription(self, audio_source: Any) -> None:
         """Start transcription. audio_source can be BytesIO buffer or file path."""
-        self.window.update_log("Transcribing...")
-        
+        self.window.update_log(f"Processing ({self.recording_mode})...")
+
+        # Get common config
         use_fmt = self.config.get("use_formatter")
-        fmt_model = self.config.get("formatter_model")
-        use_trans = self.config.get("translation_enabled")
-        target_lang = self.config.get("target_language")
-        fmt_style = self.config.get("formatting_style", "Default")
-        
-        # Get active window context for context intelligence
-        active_context = get_active_window_title()
+        fmt_model = self.config.get("formatter_model", "openai/gpt-oss-120b") # Default if missing
 
-        logger.info(f"Starting transcription: fmt={use_fmt}, trans={use_trans}, lang={target_lang}, style={fmt_style}, context={active_context}")
+        if self.recording_mode == "search":
+            # Quick Answer Mode
+            logger.info(f"Starting Quick Answer search (Refiner: {fmt_model})...")
+            # Reuse the formatter model (High Intelligence) for refinement
+            self.worker = SearchWorker(self.groq, audio_source, refinement_model_id=fmt_model)
+            self.worker.finished.connect(self.on_search_complete)
+            self.worker.error.connect(self.show_error)
+            self.worker.start()
 
-        self.worker = TranscriptionWorker(
-            self.groq, audio_source, use_fmt, fmt_model, 
-            use_translation=use_trans, target_language=target_lang,
-            formatting_style=fmt_style, active_context=active_context
-        )
-        self.worker.finished.connect(self.on_transcription_complete)
-        self.worker.error.connect(self.show_error)
-        self.worker.start()
+        else:
+            # Standard Transcription Mode
+            use_trans = self.config.get("translation_enabled")
+            target_lang = self.config.get("target_language")
+            fmt_style = self.config.get("formatting_style", "Default")
 
-    def on_transcription_complete(self, raw, final):
-        self.window.update_log(f"Raw: {raw}\n\nFinal:\n{final}")
+            # Get active window context for context intelligence
+            active_context = get_active_window_title()
+
+            logger.info(f"Starting transcription: fmt={use_fmt}, trans={use_trans}, lang={target_lang}, style={fmt_style}, context={active_context}")
+
+            self.worker = TranscriptionWorker(
+                self.groq, audio_source, use_fmt, fmt_model,
+                use_translation=use_trans, target_language=target_lang,
+                formatting_style=fmt_style, active_context=active_context
+            )
+            self.worker.finished.connect(self.on_transcription_complete)
+            self.worker.error.connect(self.show_error)
+            self.worker.start()
+
+    def on_transcription_complete(self, raw: str, final: str) -> None:
+        self.window.update_log("Transcription complete")
         self.paste_text(final)
 
-    def paste_text(self, text):
+    def on_search_complete(self, answer: str) -> None:
+        self.window.update_log(f"Answer: {answer}")
+        self.paste_text(answer)
+
+
+
+    def paste_text(self, text: str) -> None:
         """Ghost paste: backup clipboard, paste text, restore original clipboard."""
         def _smart_paste():
             try:
@@ -442,72 +354,79 @@ class WhisperAppController(QObject):
                     original_clipboard = pyperclip.paste()
                 except Exception:
                     original_clipboard = None
-                
+
                 # 2. Copy transcription and paste
                 pyperclip.copy(text.strip())
                 time.sleep(0.05)  # Brief settle time
                 keyboard.send('ctrl+v')
-                
+
                 # 3. Restore original clipboard after delay
                 if original_clipboard is not None:
                     time.sleep(0.5)  # Wait for paste to complete
                     pyperclip.copy(original_clipboard)
                     logger.debug("Clipboard restored to original content")
-                    
+
             except Exception as e:
                 logger.error(f"Smart paste failed: {e}")
-        
+
         # Run in background thread to avoid blocking
         threading.Thread(target=_smart_paste, daemon=True).start()
 
-    def show_error(self, msg):
+    def show_error(self, msg: str) -> None:
         self.window.update_log(f"Error: {msg}")
-        # Optional: QMessageBox.critical(self.window, "Error", msg)
+        # Also show a tray notification so the user sees it even if window is hidden
+        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
+            self.tray_icon.showMessage(
+                "WhisperOSS Error",
+                str(msg),
+                QSystemTrayIcon.MessageIcon.Critical,
+                4000
+            )
 
-    def setup_system_tray(self):
+    def setup_system_tray(self) -> None:
         """Setup system tray icon and menu"""
         self.tray_icon = QSystemTrayIcon(self.app)
-        
+
         # Use a default icon or create one
         icon = self.app.style().standardIcon(self.app.style().StandardPixmap.SP_MediaPlay)
         self.tray_icon.setIcon(icon)
         self.tray_icon.setToolTip("WhisperOSS - Voice to Text")
-        
+
         # Create tray menu
         tray_menu = QMenu()
-        
+
         show_action = QAction("Show WhisperOSS", self.app)
         show_action.triggered.connect(self.show_window)
         tray_menu.addAction(show_action)
-        
+
         tray_menu.addSeparator()
-        
+
         quit_action = QAction("Quit", self.app)
         quit_action.triggered.connect(self.quit_application)
         tray_menu.addAction(quit_action)
-        
+
         self.tray_icon.setContextMenu(tray_menu)
-        
+
         # Left-click to show window
         self.tray_icon.activated.connect(self.on_tray_activated)
-        
+
         self.tray_icon.show()
-    
-    def on_tray_activated(self, reason):
+
+    def on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Handle tray icon activation (left or right click)"""
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # Left click
             self.show_window()
         elif reason == QSystemTrayIcon.ActivationReason.Context:  # Right click
             # Context menu is shown automatically
             pass
-    
-    def show_window(self):
+
+    def show_window(self) -> None:
         """Show and raise the main window"""
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
-    
-    def on_window_close(self, event):
+
+    def on_window_close(self, event: Any) -> None:
         """Hide to system tray instead of closing"""
         event.ignore()
         self.window.hide()
@@ -517,25 +436,26 @@ class WhisperAppController(QObject):
             QSystemTrayIcon.MessageIcon.Information,
             2000
         )
-    
-    def quit_application(self):
+
+    def quit_application(self) -> None:
         """Properly quit the application, stopping all threads"""
         # Stop recording if active
         if self.recorder.is_recording:
             self.recorder.stop_recording()
-        
+
         # Stop hotkey listener
         self.hotkey_mgr.stop_listening()
-        
+        self.search_hotkey.stop_listening()
+
         # Hide tray icon
         self.tray_icon.hide()
-        
+
         # Close windows
         self.window.close()
         self.visualizer.close()
-        
+
         # Quit the application
         self.app.quit()
 
-    def run(self):
+    def run(self) -> None:
         sys.exit(self.app.exec())

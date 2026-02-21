@@ -128,6 +128,27 @@ We need **3 new developers**.
 # The model will mimic the punctuation, capitalization, and style shown here.
 TRANSCRIPTION_PROMPT = """Hello, welcome. I'm going to dictate some text now. Please transcribe it accurately with proper punctuation and capitalization. Here's what I'd like to say:"""
 
+SYSTEM_PROMPT_REFINE = """You are a query refinement engine.
+Your task is to take a raw spoken query and refine it into a clear, concise search query for a search engine.
+
+STRICT RULES:
+1.  **REMOVE FILLER**: Remove conversational filler ("um", "uh", "I want to know").
+2.  **CLARIFY**: correct any obvious transcription errors.
+3.  **CONCISE**: Output ONLY the refined search query. No quotes, no explanations.
+"""
+
+SYSTEM_PROMPT_SEARCH = """You are a precise search assistant.
+Your goal is to provide the exact answer to the user's question.
+
+STRICT RESPONSE RULES:
+1.  **FACTS/WEATHER/DATA**: If the user asks for a specific fact (capital, height, weather, stock price), output ONLY the answer.
+    *   Example: "Capital of France" -> "Paris"
+    *   Example: "Weather in Istanbul" -> "22°C"
+2.  **COMPLEX QUERIES**: If the question requires more nuance, answer in a SINGLE concise sentence (5-10 words).
+    *   Example: "Who won the super bowl" -> "The Kansas City Chiefs won Super Bowl LVIII."
+3.  **NO FILLER**: Do NOT say "Here is the answer", "I found this", etc. Just the answer.
+"""
+
 SYSTEM_PROMPT_TRANSLATOR = """You are a precise text formatting and translation engine.
 Your task is to take raw transcribed speech, format it for readability, and translate it into {language}. 
 
