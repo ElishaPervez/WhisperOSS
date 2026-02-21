@@ -48,6 +48,7 @@ class WhisperAppController(QObject):
     _start_search_signal = pyqtSignal()
     _stop_search_signal = pyqtSignal()
     _paste_completed_signal = pyqtSignal()
+    _paste_failed_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -67,6 +68,7 @@ class WhisperAppController(QObject):
         self._start_search_signal.connect(lambda: self.set_recording(True, "search"))
         self._stop_search_signal.connect(lambda: self.set_recording(False))
         self._paste_completed_signal.connect(self._on_paste_completed)
+        self._paste_failed_signal.connect(self._on_paste_failed)
 
         # Check for first run (no API key) and prompt before initializing
         self._check_first_run_api_key()
@@ -91,7 +93,7 @@ class WhisperAppController(QObject):
 
         # UI
         self.window = MainWindow(self.config)
-        self.visualizer = AudioVisualizer()
+        self.visualizer = AudioVisualizer(animation_fps=self.config.get("animation_fps", 100))
 
         # System Tray
         self.setup_system_tray()
@@ -238,6 +240,8 @@ class WhisperAppController(QObject):
             self.window.set_api_key_validation_result(True, "API key validated and saved.")
         elif key == "input_device_index":
             self.recorder.update_device(value)
+        elif key == "animation_fps":
+            self.visualizer.set_animation_fps(value)
 
     def refresh_models(self) -> None:
         # In a real app, do this async
@@ -352,7 +356,12 @@ class WhisperAppController(QObject):
 
     def paste_text(self, text: str) -> None:
         """Ghost paste: backup clipboard, paste text, restore original clipboard."""
+        # Transition out of processing immediately when transcription is ready.
+        # Clipboard operations can occasionally block, and should not delay UI state.
+        self._paste_completed_signal.emit()
+
         def _smart_paste():
+            original_clipboard = None
             try:
                 # 1. Backup current clipboard
                 try:
@@ -365,22 +374,28 @@ class WhisperAppController(QObject):
                 time.sleep(0.05)  # Brief settle time
                 keyboard.send('ctrl+v')
 
-                # 3. Restore original clipboard after delay
-                if original_clipboard is not None:
+            except Exception as e:
+                logger.error(f"Smart paste failed: {e}")
+                self._paste_failed_signal.emit()
+                return
+
+            # 3. Restore original clipboard after delay (best-effort, non-blocking for UI transitions)
+            if original_clipboard is not None:
+                try:
                     time.sleep(0.5)  # Wait for paste to complete
                     pyperclip.copy(original_clipboard)
                     logger.debug("Clipboard restored to original content")
-
-            except Exception as e:
-                logger.error(f"Smart paste failed: {e}")
-            finally:
-                self._paste_completed_signal.emit()
+                except Exception as e:
+                    logger.debug(f"Clipboard restore skipped: {e}")
 
         # Run in background thread to avoid blocking
         threading.Thread(target=_smart_paste, daemon=True).start()
 
     def _on_paste_completed(self) -> None:
         self.visualizer.play_completion_and_hide()
+
+    def _on_paste_failed(self) -> None:
+        self.visualizer.cancel_processing()
 
     def show_error(self, msg: str) -> None:
         self.window.update_log(f"Error: {msg}")

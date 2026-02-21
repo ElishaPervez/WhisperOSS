@@ -45,8 +45,15 @@ def test_processing_completion_states(app, qtbot):
     assert vis._visualizer.mode == "processing"
 
     vis.play_completion_and_hide(delay_ms=150)
-    assert vis._visualizer.mode == "completing"
+    assert vis._visualizer.mode == "success"
     assert vis._hide_after_completion_timer.isActive() is True
+
+def test_animation_fps_updates_timer_interval(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+
+    vis.set_animation_fps(100)
+    assert vis._visualizer.timer.interval() == 10
 
 def test_hide_does_not_flash_idle_before_fade_complete(app, qtbot):
     vis = AudioVisualizer()

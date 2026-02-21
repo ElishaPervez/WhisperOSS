@@ -48,6 +48,7 @@ def test_load_default_config():
 
     assert manager.get("api_key") == ""
     assert manager.get("appearance_mode") == "auto"
+    assert manager.get("animation_fps") == 100
     assert config_file.exists()
     _cleanup_test_config_file(config_file)
 

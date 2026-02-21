@@ -33,3 +33,5 @@ config.json
 .claude/
 .jules/
 gha-creds-*.json
+
+personal run.bat

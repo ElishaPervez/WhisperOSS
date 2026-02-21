@@ -43,6 +43,18 @@ def test_appearance_mode_change_persists(app, qtbot, mock_config):
     mock_config.set.assert_any_call("appearance_mode", "dark")
     mock_config.save.assert_called()
 
+def test_animation_fps_change_persists_and_emits(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.animation_fps_combo.setCurrentText("120")
+
+    mock_config.set.assert_any_call("animation_fps", 120)
+    mock_config.save.assert_called()
+    assert blocker.args[0] == "animation_fps"
+    assert blocker.args[1] == 120
+
 def test_device_change(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)

@@ -69,17 +69,17 @@ class AnimatedToggle(QCheckBox):
 
         if self.isEnabled():
             if self.isChecked():
-                track_color = QColor("#22c55e") if dark_theme else QColor("#0ea5e9")
+                track_color = QColor("#3b82f6") if dark_theme else QColor("#0ea5e9")
             else:
-                track_color = QColor("#334155") if dark_theme else QColor("#cbd5e1")
+                track_color = QColor("#2b3b54") if dark_theme else QColor("#cbd5e1")
         else:
-            track_color = QColor("#1f2937") if dark_theme else QColor("#e2e8f0")
+            track_color = QColor("#1a2536") if dark_theme else QColor("#e2e8f0")
 
         painter.setBrush(QBrush(track_color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(0, 0, self.width(), self.height(), 14, 14)
 
-        handle_color = QColor("#e2e8f0") if dark_theme else QColor("#ffffff")
+        handle_color = QColor("#dbeafe") if dark_theme else QColor("#ffffff")
         painter.setBrush(QBrush(handle_color))
         painter.drawEllipse(int(self._handle_position), 4, 20, 20)
 
@@ -181,21 +181,21 @@ class GlassPanel(QFrame):
         card_name = self.objectName()
         if dark_theme:
             if card_name == "HeroCard":
-                top = QColor(15, 23, 42, 230)
-                bottom = QColor(2, 6, 23, 220)
-                border = QColor(34, 197, 94, 96)
+                top = QColor(18, 29, 47, 238)
+                bottom = QColor(12, 20, 34, 234)
+                border = QColor(93, 143, 212, 118)
             elif card_name == "SettingsCard":
-                top = QColor(15, 23, 42, 236)
-                bottom = QColor(2, 6, 23, 230)
-                border = QColor(45, 212, 191, 94)
+                top = QColor(15, 24, 40, 238)
+                bottom = QColor(10, 17, 30, 234)
+                border = QColor(67, 98, 142, 116)
             elif card_name == "StatCard":
-                top = QColor(30, 41, 59, 228)
-                bottom = QColor(15, 23, 42, 220)
-                border = QColor(34, 197, 94, 84)
+                top = QColor(22, 34, 53, 234)
+                bottom = QColor(14, 24, 39, 230)
+                border = QColor(78, 113, 163, 110)
             else:
-                top = QColor(15, 23, 42, 228)
-                bottom = QColor(2, 6, 23, 220)
-                border = QColor(45, 212, 191, 88)
+                top = QColor(15, 24, 40, 236)
+                bottom = QColor(10, 18, 31, 232)
+                border = QColor(67, 98, 142, 108)
         else:
             if card_name == "HeroCard":
                 top = QColor(255, 255, 255, 220)
@@ -241,6 +241,7 @@ class MainWindow(QWidget):
         self.oldPos = self.pos()
         self._initial_layout_applied = False
         self._appearance_mode = self._normalize_appearance_mode(self.config.get("appearance_mode", "auto"))
+        self._animation_fps = self._normalize_animation_fps(self.config.get("animation_fps", 100))
         self._is_dark_theme = self._resolve_dark_theme()
 
         # Frameless layout keeps this feeling like a polished desktop app shell.
@@ -275,6 +276,13 @@ class MainWindow(QWidget):
     def _normalize_appearance_mode(self, mode):
         normalized = str(mode or "auto").strip().lower()
         return normalized if normalized in {"auto", "dark", "light"} else "auto"
+
+    def _normalize_animation_fps(self, value):
+        try:
+            fps = int(value)
+        except (TypeError, ValueError):
+            fps = 100
+        return max(30, min(240, fps))
 
     def _resolve_dark_theme(self):
         if self._appearance_mode == "dark":
@@ -541,157 +549,157 @@ class MainWindow(QWidget):
 
         dark_overrides = """
             QWidget {
-                color: #e2e8f0;
+                color: #dde7f6;
             }
 
             QFrame#HeaderBar {
-                border: 1px solid rgba(45, 212, 191, 0.42);
-                background: rgba(2, 6, 23, 0.78);
+                border: 1px solid rgba(83, 119, 166, 0.62);
+                background: rgba(11, 18, 31, 0.92);
             }
 
             QLabel#WindowTitle {
-                color: #ecfeff;
+                color: #f2f7ff;
             }
 
             QLabel#Subtitle {
-                color: #94a3b8;
+                color: #9fb2cf;
             }
 
             QLabel#StatusBadge {
-                background: #0f172a;
-                color: #cbd5e1;
-                border: 1px solid #334155;
+                background: #131f33;
+                color: #ccdaee;
+                border: 1px solid #314b72;
             }
 
             QLabel#StatusBadge[state='ok'] {
-                background: #052e16;
-                border: 1px solid #15803d;
-                color: #86efac;
+                background: #0f2a23;
+                border: 1px solid #2f8f75;
+                color: #b8f3df;
             }
 
             QLabel#StatusBadge[state='error'] {
-                background: #450a0a;
-                border: 1px solid #b91c1c;
-                color: #fecaca;
+                background: #3c151e;
+                border: 1px solid #bc4f67;
+                color: #ffd5df;
             }
 
             QLabel#StatusBadge[state='active'] {
-                background: #0c4a6e;
-                border: 1px solid #0284c7;
-                color: #bae6fd;
+                background: #143154;
+                border: 1px solid #4d8ad0;
+                color: #d3e9ff;
             }
 
             QPushButton#TitleBtn,
             QPushButton#CloseBtn {
-                border: 1px solid #334155;
-                background: #0f172a;
-                color: #cbd5e1;
+                border: 1px solid #35507a;
+                background: #111c2f;
+                color: #cfdcf0;
             }
 
             QPushButton#TitleBtn:hover {
-                background: #1e293b;
-                border: 1px solid #475569;
+                background: #182741;
+                border: 1px solid #4f74ac;
             }
 
             QPushButton#CloseBtn:hover {
-                background: #7f1d1d;
-                border: 1px solid #b91c1c;
-                color: #fee2e2;
+                background: #4f1d29;
+                border: 1px solid #ca5f78;
+                color: #ffe4ea;
             }
 
             QLabel#HeroTitle,
             QLabel#CardTitle,
             QLabel#StatValue {
-                color: #f8fafc;
+                color: #edf4ff;
             }
 
             QLabel#MutedText {
-                color: #94a3b8;
+                color: #9fb1cd;
             }
 
             QLabel#SectionCaption,
             QLabel#StatTitle {
-                color: #7dd3fc;
+                color: #8fc4ff;
             }
 
             QComboBox {
-                border: 1px solid #334155;
-                background: rgba(2, 6, 23, 0.90);
-                color: #e2e8f0;
+                border: 1px solid #35507a;
+                background: rgba(10, 16, 28, 0.94);
+                color: #e7effc;
             }
 
             QComboBox:hover {
-                border: 1px solid #0ea5e9;
+                border: 1px solid #4d8ad0;
             }
 
             QComboBox:focus {
-                border: 1px solid #22c55e;
+                border: 1px solid #74afff;
             }
 
             QComboBox::down-arrow {
-                border-top: 6px solid #94a3b8;
+                border-top: 6px solid #a8bbd8;
             }
 
             QComboBox QAbstractItemView {
-                border: 1px solid #334155;
-                background: #020617;
-                selection-background-color: #166534;
-                selection-color: #ecfdf5;
-                color: #e2e8f0;
+                border: 1px solid #35507a;
+                background: #0a1221;
+                selection-background-color: #2f67bc;
+                selection-color: #f2f7ff;
+                color: #e5eefc;
             }
 
             QLineEdit {
-                border: 1px solid #334155;
-                background: rgba(2, 6, 23, 0.90);
-                color: #e2e8f0;
+                border: 1px solid #35507a;
+                background: rgba(10, 16, 28, 0.94);
+                color: #e7effc;
             }
 
             QLineEdit:focus {
-                border: 1px solid #22c55e;
+                border: 1px solid #74afff;
             }
 
             QPushButton#SoftButton {
-                border: 1px solid #334155;
-                background: #0f172a;
-                color: #cbd5e1;
+                border: 1px solid #35507a;
+                background: #152338;
+                color: #cfddf2;
             }
 
             QPushButton#SoftButton:hover {
-                border: 1px solid #475569;
-                background: #1e293b;
+                border: 1px solid #4d8ad0;
+                background: #1b2d48;
             }
 
             QPushButton#PrimaryAction {
-                border: 1px solid #166534;
-                background: #15803d;
-                color: #f0fdf4;
+                border: 1px solid #3f73c8;
+                background: #2c63ba;
+                color: #f4f8ff;
             }
 
             QPushButton#PrimaryAction:hover {
-                border: 1px solid #22c55e;
-                background: #166534;
+                border: 1px solid #5a97f2;
+                background: #3976d7;
             }
 
             QPushButton#PrimaryAction:disabled {
-                border: 1px solid #334155;
-                background: #1e293b;
-                color: #64748b;
+                border: 1px solid #2f476c;
+                background: #1a2639;
+                color: #7487a5;
             }
 
             QLabel#ApiHint {
-                color: #93c5fd;
+                color: #aac6ee;
             }
 
             QLabel#ApiHint[state='ok'] {
-                color: #86efac;
+                color: #a6efd4;
             }
 
             QLabel#ApiHint[state='error'] {
-                color: #fca5a5;
+                color: #ffc3d2;
             }
 
             QFrame#Divider {
-                background: rgba(51, 65, 85, 0.80);
+                background: rgba(57, 83, 120, 0.88);
             }
             """
 
@@ -948,6 +956,12 @@ class MainWindow(QWidget):
         self.appearance_combo.currentTextChanged.connect(self.on_appearance_mode_changed)
         settings_layout.addWidget(self.appearance_combo)
 
+        settings_layout.addWidget(QLabel("Animation FPS"))
+        self.animation_fps_combo = QComboBox()
+        self.animation_fps_combo.addItems(["60", "75", "90", "100", "120", "144", "165", "240"])
+        self.animation_fps_combo.currentTextChanged.connect(self.on_animation_fps_changed)
+        settings_layout.addWidget(self.animation_fps_combo)
+
         note = QLabel("Changes are saved immediately and apply to the next recording.")
         note.setObjectName("MutedText")
         note.setWordWrap(True)
@@ -1041,6 +1055,14 @@ class MainWindow(QWidget):
         self.appearance_combo.setCurrentText(appearance_labels[self._appearance_mode])
         self.appearance_combo.blockSignals(False)
 
+        self._animation_fps = self._normalize_animation_fps(self.config.get("animation_fps", 100))
+        self.animation_fps_combo.blockSignals(True)
+        fps_text = str(self._animation_fps)
+        if self.animation_fps_combo.findText(fps_text) == -1:
+            self.animation_fps_combo.addItem(fps_text)
+        self.animation_fps_combo.setCurrentText(fps_text)
+        self.animation_fps_combo.blockSignals(False)
+
         use_formatter = self.config.get("use_formatter", False)
         self.format_toggle.setChecked(use_formatter)
         self.model_combo.setEnabled(use_formatter)
@@ -1118,18 +1140,21 @@ class MainWindow(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
         if self._is_dark_theme:
             if self._blur_active:
                 gradient = QLinearGradient(0, 0, 0, self.height())
-                gradient.setColorAt(0.0, QColor(2, 6, 23, 178))
-                gradient.setColorAt(1.0, QColor(15, 23, 42, 178))
-                border_color = QColor(45, 212, 191, 136)
+                gradient.setColorAt(0.0, QColor(10, 16, 28, 226))
+                gradient.setColorAt(1.0, QColor(15, 24, 41, 226))
+                border_color = QColor(88, 124, 176, 126)
             else:
                 gradient = QLinearGradient(0, 0, 0, self.height())
-                gradient.setColorAt(0.0, QColor(2, 6, 23, 246))
-                gradient.setColorAt(1.0, QColor(15, 23, 42, 246))
-                border_color = QColor(30, 41, 59, 180)
+                gradient.setColorAt(0.0, QColor(10, 16, 28, 252))
+                gradient.setColorAt(1.0, QColor(15, 24, 41, 252))
+                border_color = QColor(74, 103, 143, 162)
         else:
             if self._blur_active:
                 gradient = QLinearGradient(0, 0, 0, self.height())
@@ -1143,7 +1168,7 @@ class MainWindow(QWidget):
                 border_color = QColor(148, 163, 184, 120)
 
         painter.setBrush(QBrush(gradient))
-        shell_rect = self.rect().adjusted(1, 1, -1, -1)
+        shell_rect = self.rect().adjusted(2, 2, -2, -2)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(shell_rect, 24, 24)
 
@@ -1229,6 +1254,16 @@ class MainWindow(QWidget):
         self._setup_styling()
         self._refresh_theme_widgets()
         self.update()
+
+    def on_animation_fps_changed(self, text):
+        fps = self._normalize_animation_fps(text)
+        if fps == self._animation_fps:
+            return
+
+        self._animation_fps = fps
+        self.config.set("animation_fps", fps)
+        self.config.save()
+        self.config_changed.emit("animation_fps", fps)
 
     def on_api_key_toggle_visibility(self):
         showing = self.api_key_input.echoMode() == QLineEdit.EchoMode.Normal

@@ -138,6 +138,11 @@ def test_on_config_changed_api_key_invalid(app, mock_deps):
     mock_deps["groq"].update_api_key.assert_not_called()
     mock_deps["window"].set_api_key_validation_result.assert_called_with(False, "The provided API key is invalid.")
 
+def test_on_config_changed_animation_fps_updates_visualizer(app, mock_deps):
+    controller = WhisperAppController()
+    controller.on_config_changed("animation_fps", 120)
+    mock_deps["visualizer"].set_animation_fps.assert_called_once_with(120)
+
 def test_show_window_after_setup_complete(app, mock_deps):
     with patch.object(WhisperAppController, "_check_first_run_api_key", autospec=True) as mock_setup:
         def mark_setup_complete(controller):

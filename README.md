@@ -22,27 +22,10 @@ A blazing fast, AI-powered voice typing application for Windows that feels nativ
 3.  **Get an API Key**: Sign up at [console.groq.com](https://console.groq.com) and create an API Key.
 
 ## 🏃 Usage
-1.  Run `run.bat` (or `python src/main.py`).
+1.  Run `python src/main.py`.
 2.  **First Run**: Enter your Groq API key when prompted.
 3.  **Record**: Hold `Ctrl + Win` (default) to record. Release to transcribe.
 4.  **Tray Icon**: The app runs in the background. Check the system tray to access settings.
-
-## 🖥️ Desktop Build + Installer (Windows)
-WhisperOSS is a native `PyQt6` desktop app. To create an installable Windows package:
-
-1. Install build tools:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and ensure `iscc.exe` is available in `PATH`.
-3. Build app bundle + installer:
-   ```bash
-   build_installer.bat 0.1.0
-   ```
-
-Outputs:
-- App bundle: `dist/WhisperOSS/`
-- Installer: `dist/installer/WhisperOSS-Setup-<version>.exe`
 
 ## 📂 Configuration
 Your settings (API Key, Mic Device, Formatting preferences) are saved in `%APPDATA%\WhisperOSS\config.json`.

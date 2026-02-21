@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
     "formatter_model": "openai/gpt-oss-120b",  # Default fast/smart model
     "input_device_index": None, # None means default
     "appearance_mode": "auto",  # auto | dark | light
+    "animation_fps": 100,
     "use_formatter": False,
     "translation_enabled": False,
     "target_language": "English"
