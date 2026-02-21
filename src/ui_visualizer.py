@@ -185,46 +185,126 @@ class CompactAudioVisualizer(QWidget):
         # Animation phase for idle animation
         self.idle_phase = 0.0
         self.is_active = False
+        self.mode = "idle"  # idle | listening | processing | completing
+        self.processing_phase = 0.0
+        self.completion_progress = 0.0
+        self.processing_mix = 0.0  # 0=bars only, 1=loader only
         
         # Smooth animation timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.animate)
         self.timer.start(16)  # ~60 FPS
+
+    def set_mode(self, mode: str):
+        """Switch animation mode for recording lifecycle transitions."""
+        if mode not in {"idle", "listening", "processing", "completing"}:
+            return
+
+        previous_mode = self.mode
+        self.mode = mode
+        if mode == "idle":
+            self.target_amplitude = 0.0
+            self.is_active = False
+            self.processing_mix = 0.0
+        elif mode == "listening":
+            self.is_active = False
+            self.processing_mix = 0.0
+        elif mode == "processing":
+            self.processing_phase = 0.0
+            self.target_amplitude = 0.42
+            self.is_active = True
+            # Keep a tiny blend if we were already in processing, otherwise
+            # restart transition from bars -> loader.
+            self.processing_mix = 0.0 if previous_mode != "processing" else min(self.processing_mix, 0.3)
+        elif mode == "completing":
+            self.completion_progress = 0.0
+            self.target_amplitude = 0.0
+            self.is_active = True
+            self.processing_mix = 1.0
         
     def update_level(self, level):
         """Level is expected to be 0.0 to 1.0"""
-        self.target_amplitude = min(1.0, level * 1.5)
-        self.is_active = level > 0.01
+        if self.mode in {"processing", "completing"}:
+            return
+
+        self.mode = "listening"
+        shaped = min(1.0, (max(level, 0.0) ** 0.65) * 1.35)
+        self.target_amplitude = shaped
+        self.is_active = level > 0.008
         
         # Distribute to individual bars with wave-like variation
         for i in range(self.bar_count):
             # Create wave pattern - middle bars higher
             center = self.bar_count / 2
             distance_from_center = abs(i - center) / center
-            height_modifier = 1.0 - (distance_from_center * 0.4)
+            height_modifier = 1.0 - (distance_from_center * 0.48)
             
-            variation = 0.6 + 0.4 * math.sin(self.idle_phase * 2 + self.bar_phases[i])
+            variation = 0.68 + 0.46 * math.sin((self.idle_phase * 2.4) + self.bar_phases[i])
             self.bar_targets[i] = self.target_amplitude * variation * height_modifier
 
     def animate(self):
         # Global amplitude lerp
-        self.amplitude += (self.target_amplitude - self.amplitude) * 0.15
+        if self.mode == "listening" and self.is_active:
+            self.amplitude += (self.target_amplitude - self.amplitude) * 0.34
+        else:
+            self.amplitude += (self.target_amplitude - self.amplitude) * 0.16
         
         # Idle animation phase
         self.idle_phase += 0.06
+
+        center = (self.bar_count - 1) / 2.0
+
+        if self.mode == "processing":
+            # Slightly slower cadence so processing feels calm/readable.
+            self.processing_phase += 0.11
+            self.processing_mix = min(1.0, self.processing_mix + 0.06)
+
+            for i in range(self.bar_count):
+                distance = abs(i - center) / max(center, 1.0)
+                # Traveling wave + breathing base so users see ongoing API work.
+                travel = 0.25 + 0.55 * (0.5 + 0.5 * math.sin(self.processing_phase - i * 0.62))
+                base = 0.16 + (0.14 * (1.0 - distance))
+                self.bar_targets[i] = min(1.0, base + travel * (0.72 - 0.28 * distance))
+                self.bar_amplitudes[i] += (self.bar_targets[i] - self.bar_amplitudes[i]) * 0.20
+            self.update()
+            return
+
+        if self.mode == "completing":
+            # Keep motion alive during completion so the loader never appears frozen.
+            self.processing_phase += 0.09
+            self.completion_progress = min(1.0, self.completion_progress + 0.07)
+            if self.completion_progress < 0.45:
+                envelope = self.completion_progress / 0.45
+            else:
+                envelope = max(0.0, 1.0 - (self.completion_progress - 0.45) / 0.55)
+
+            for i in range(self.bar_count):
+                distance = abs(i - center) / max(center, 1.0)
+                peak = (1.0 - distance * 0.65)
+                self.bar_targets[i] = max(0.0, envelope * peak)
+                self.bar_amplitudes[i] += (self.bar_targets[i] - self.bar_amplitudes[i]) * 0.26
+
+            self.update()
+            return
         
         # Individual bar animations
+        self.processing_mix = max(0.0, self.processing_mix - 0.14)
+
         for i in range(self.bar_count):
             # Add subtle idle movement when not active
             if not self.is_active:
-                center = self.bar_count / 2
-                distance_from_center = abs(i - center) / center
+                distance_from_center = abs(i - center) / max(center, 1.0)
                 height_mod = 1.0 - (distance_from_center * 0.5)
                 idle_movement = (0.1 + 0.15 * math.sin(self.idle_phase + self.bar_phases[i])) * height_mod
                 self.bar_targets[i] = idle_movement
             
-            # Smooth lerp with slight variation per bar
-            lerp_speed = 0.1 + 0.02 * (i % 3)
+            # Fast attack, gentler decay for a snappier "live" feel.
+            target_delta = self.bar_targets[i] - self.bar_amplitudes[i]
+            if self.is_active:
+                base_speed = 0.34 if target_delta > 0 else 0.19
+                lerp_speed = base_speed + 0.02 * (i % 3)
+            else:
+                lerp_speed = 0.12 + 0.02 * (i % 3)
             self.bar_amplitudes[i] += (self.bar_targets[i] - self.bar_amplitudes[i]) * lerp_speed
         
         self.update()
@@ -253,6 +333,7 @@ class CompactAudioVisualizer(QWidget):
         max_bar_height = h - 10  # Reduced padding for compact look
         min_bar_height = 4
         
+        bar_alpha = max(0.0, 1.0 - self.processing_mix)
         for i in range(self.bar_count):
             amp = self.bar_amplitudes[i]
             bar_height = min_bar_height + (max_bar_height - min_bar_height) * amp
@@ -263,8 +344,8 @@ class CompactAudioVisualizer(QWidget):
             
             # Glow effect when active
             glow_intensity = amp * 0.7
-            if glow_intensity > 0.1:
-                glow_color = QColor(255, 255, 255, int(40 * glow_intensity))  # White glow
+            if glow_intensity > 0.1 and bar_alpha > 0.01:
+                glow_color = QColor(255, 255, 255, int(40 * glow_intensity * bar_alpha))  # White glow
                 painter.setBrush(QBrush(glow_color))
                 painter.setPen(Qt.PenStyle.NoPen)
                 glow_padding = 2
@@ -277,9 +358,51 @@ class CompactAudioVisualizer(QWidget):
                 )
             
             # Main bar - solid white
-            painter.setBrush(QBrush(QColor(255, 255, 255, 230)))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(int(x), int(y), int(bar_width), int(bar_height), 2, 2)
+            if bar_alpha > 0.01:
+                painter.setBrush(QBrush(QColor(255, 255, 255, int(230 * bar_alpha))))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(int(x), int(y), int(bar_width), int(bar_height), 2, 2)
+
+        # Distinct processing loader: dotted runner + rotating spinner.
+        loader_alpha = self.processing_mix
+        if self.mode == "completing":
+            # Fade loader out during completion instead of holding a static full-opacity state.
+            loader_alpha *= max(0.0, 1.0 - self.completion_progress)
+        if loader_alpha > 0.01:
+            line_left = 18
+            spinner_cx = w - 16
+            line_right = max(line_left + 12, spinner_cx - 10)
+            line_y = h / 2
+            dot_spacing = 6
+            dot_radius = 1.1
+            dot_count = max(3, int((line_right - line_left) / dot_spacing))
+
+            for idx in range(dot_count):
+                x = line_left + idx * dot_spacing
+                if x >= line_right:
+                    break
+                phase = self.processing_phase * 1.1 - idx * 0.55
+                pulse = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(phase))
+                dot_alpha = int(180 * loader_alpha * pulse)
+                painter.setBrush(QBrush(QColor(255, 255, 255, dot_alpha)))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(int(x - dot_radius), int(line_y - dot_radius), int(dot_radius * 2.2), int(dot_radius * 2.2))
+
+            spinner_cy = h / 2
+            spinner_radius = 5.8
+            spoke_len = 2.6
+            spokes = 8
+            rotation = self.processing_phase * 1.35
+            for spoke in range(spokes):
+                angle = rotation + (2 * math.pi * spoke / spokes)
+                x1 = spinner_cx + math.cos(angle) * (spinner_radius - spoke_len)
+                y1 = spinner_cy + math.sin(angle) * (spinner_radius - spoke_len)
+                x2 = spinner_cx + math.cos(angle) * spinner_radius
+                y2 = spinner_cy + math.sin(angle) * spinner_radius
+                tail = (spokes - spoke) / spokes
+                alpha = int(255 * loader_alpha * (0.25 + 0.75 * tail))
+                painter.setPen(QPen(QColor(255, 255, 255, alpha), 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
 
 # Keep AudioVisualizer for backward compatibility if needed as overlay
@@ -307,6 +430,10 @@ class AudioVisualizer(QWidget):
         self._fade_timer.timeout.connect(self._animate_fade)
         self._fade_target = 0.0
         self._is_showing = False
+
+        self._hide_after_completion_timer = QTimer(self)
+        self._hide_after_completion_timer.setSingleShot(True)
+        self._hide_after_completion_timer.timeout.connect(self.hide)
         
     def _animate_fade(self):
         """Smooth fade animation step."""
@@ -316,12 +443,14 @@ class AudioVisualizer(QWidget):
             self._fade_timer.stop()
             if self._opacity <= 0:
                 super().hide()
+                self._visualizer.set_mode("idle")
         else:
             self._opacity += diff * 0.15  # Smooth lerp
         self.setWindowOpacity(self._opacity)
         
     def show(self):
         """Show with fade in animation."""
+        self._hide_after_completion_timer.stop()
         if not self._is_showing:
             self._is_showing = True
             self._opacity = 0.0
@@ -333,13 +462,29 @@ class AudioVisualizer(QWidget):
     
     def hide(self):
         """Hide with fade out animation."""
+        self._hide_after_completion_timer.stop()
         self._is_showing = False
         self._fade_target = 0.0
         if not self._fade_timer.isActive():
             self._fade_timer.start(16)
-        
+
     def update_level(self, level):
         self._visualizer.update_level(level)
+
+    def set_listening_mode(self):
+        self._hide_after_completion_timer.stop()
+        self._visualizer.set_mode("listening")
+
+    def set_processing_mode(self):
+        self._hide_after_completion_timer.stop()
+        self._visualizer.set_mode("processing")
+
+    def play_completion_and_hide(self, delay_ms: int = 260):
+        self._visualizer.set_mode("completing")
+        self._hide_after_completion_timer.start(max(120, int(delay_ms)))
+
+    def cancel_processing(self):
+        self.hide()
 
     def mousePressEvent(self, event):
         self.oldPos = event.globalPosition().toPoint()

@@ -47,6 +47,7 @@ class WhisperAppController(QObject):
     # New signals for search mode
     _start_search_signal = pyqtSignal()
     _stop_search_signal = pyqtSignal()
+    _paste_completed_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -65,6 +66,7 @@ class WhisperAppController(QObject):
 
         self._start_search_signal.connect(lambda: self.set_recording(True, "search"))
         self._stop_search_signal.connect(lambda: self.set_recording(False))
+        self._paste_completed_signal.connect(self._on_paste_completed)
 
         # Check for first run (no API key) and prompt before initializing
         self._check_first_run_api_key()
@@ -260,12 +262,15 @@ class WhisperAppController(QObject):
 
         if recording:
             self.recording_mode = mode
+            self.visualizer.set_listening_mode()
             # Show first, then position - some window systems reset position during show()
             self.visualizer.show()
             self._position_visualizer_at_cursor()
             self.recorder.start_recording()
         else:
-            self.visualizer.hide()
+            # Keep visualizer visible and switch to a processing animation
+            # while the API request and transcription are in progress.
+            self.visualizer.set_processing_mode()
             self.recorder.stop_recording()
 
 
@@ -368,12 +373,18 @@ class WhisperAppController(QObject):
 
             except Exception as e:
                 logger.error(f"Smart paste failed: {e}")
+            finally:
+                self._paste_completed_signal.emit()
 
         # Run in background thread to avoid blocking
         threading.Thread(target=_smart_paste, daemon=True).start()
 
+    def _on_paste_completed(self) -> None:
+        self.visualizer.play_completion_and_hide()
+
     def show_error(self, msg: str) -> None:
         self.window.update_log(f"Error: {msg}")
+        self.visualizer.cancel_processing()
         # Also show a tray notification so the user sees it even if window is hidden
         if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
             self.tray_icon.showMessage(

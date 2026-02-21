@@ -1,2 +1,4 @@
 @echo off
-start "" pythonw "C:\projects\WhisperOSS\src\main.py"
+setlocal
+set "ROOT=%~dp0"
+start "" pythonw "%ROOT%src\main.py"

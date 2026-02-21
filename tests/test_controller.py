@@ -77,7 +77,7 @@ def test_toggle_recording(app, mock_deps):
     controller.toggle_recording()
     
     mock_deps["recorder"].stop_recording.assert_called_once()
-    mock_deps["visualizer"].hide.assert_called_once()
+    mock_deps["visualizer"].set_processing_mode.assert_called_once()
     mock_deps["window"].set_recording_state.assert_called_with(False)
 
 def test_on_transcription_complete(app, mock_deps):
@@ -104,6 +104,7 @@ def test_on_transcription_complete(app, mock_deps):
         # Use assert_any_call because copy is called twice (text + restore)
         mock_copy.assert_any_call("final")
         mock_send.assert_called_with('ctrl+v')
+        mock_deps["visualizer"].play_completion_and_hide.assert_called_once()
 
 def test_on_config_changed_api_key_valid(app, mock_deps):
     controller = WhisperAppController()

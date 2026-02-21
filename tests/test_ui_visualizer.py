@@ -35,3 +35,27 @@ def test_fade_animation(app, qtbot):
     vis.hide()
     assert vis._is_showing is False
     assert vis._fade_target == 0.0
+
+def test_processing_completion_states(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+
+    vis.set_processing_mode()
+    assert vis._visualizer.mode == "processing"
+
+    vis.play_completion_and_hide(delay_ms=150)
+    assert vis._visualizer.mode == "completing"
+    assert vis._hide_after_completion_timer.isActive() is True
+
+def test_hide_does_not_flash_idle_before_fade_complete(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+
+    vis.set_processing_mode()
+    assert vis._visualizer.mode == "processing"
+
+    vis.hide()
+    # Mode should remain in-flight during fade-out; idle only after fully hidden.
+    assert vis._visualizer.mode == "processing"

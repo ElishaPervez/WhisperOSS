@@ -91,11 +91,10 @@ def test_audio_callback_visualizer(mock_pyaudio, qtbot):
     data = np.array([1000, 2000, -3000], dtype=np.int16).tobytes()
     
     with qtbot.waitSignal(recorder.visualizer_update) as blocker:
-        # Call multiple times to satisfy decimation counter (emits every 3rd frame)
-        recorder._audio_callback(data, 1024, None, None)
-        recorder._audio_callback(data, 1024, None, None)
         recorder._audio_callback(data, 1024, None, None)
     
-    # Peak is 3000. 3000/7000 = 0.428...
-    # assert approx
-    assert abs(blocker.args[0] - (3000/7000.0)) < 0.001
+    emitted = blocker.args[0]
+    linear = 3000 / 7000.0
+    assert 0.0 <= emitted <= 1.0
+    # Low/medium volume should now be boosted for better visual responsiveness.
+    assert emitted > linear

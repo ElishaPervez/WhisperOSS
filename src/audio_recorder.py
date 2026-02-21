@@ -32,6 +32,7 @@ class AudioRecorder(QObject):
 
         # Decimation counter for visualizer updates to reduce UI thread load
         self._viz_counter = 0
+        self._viz_emit_every = 1
 
     def update_device(self, device_index: int) -> None:
         self.input_device_index = device_index
@@ -77,7 +78,7 @@ class AudioRecorder(QObject):
     def _audio_callback(self, in_data: bytes, frame_count: int, time_info: dict, status: int) -> Tuple[Optional[bytes], int]:
         if self.is_recording:
             self.frames.append(in_data)
-            # Calculate amplitude for visualizer using RMS (Root Mean Square)
+            # Calculate amplitude for visualizer
             audio_data = np.frombuffer(in_data, dtype=np.int16)
 
             # Prevent division by zero or empty errors
@@ -88,17 +89,24 @@ class AudioRecorder(QObject):
             # Peak Amplitude Calculation (Optimized)
             peak = np.max(np.abs(audio_data))
 
-            # Normalize
-            normalized_peak = min(peak / 7000.0, 1.0)
+            normalized_peak = self._normalize_peak_for_visualizer(int(peak))
 
-            # Decimate visualizer updates: emit only every 3rd frame
+            # Emit at a controlled cadence to keep UI responsive without flooding.
             self._viz_counter += 1
-            if self._viz_counter % 3 == 0:
+            if self._viz_counter % self._viz_emit_every == 0:
                 self.visualizer_update.emit(normalized_peak)
                 self._viz_counter = 0
 
             return (in_data, pyaudio.paContinue)
         return (None, pyaudio.paComplete)
+
+    def _normalize_peak_for_visualizer(self, peak: int) -> float:
+        """
+        Map raw int16 peak amplitude into a visualizer-friendly 0..1 range.
+        A light non-linear curve makes low-volume speech more reactive.
+        """
+        linear = min(max(float(peak) / 7000.0, 0.0), 1.0)
+        return min((linear ** 0.72) * 1.18, 1.0)
 
     def _process_to_memory(self) -> None:
         """Process recorded audio to in-memory BytesIO buffer (zero disk latency)."""
