@@ -101,19 +101,19 @@ class GlassPanel(QFrame):
             if card_name == "HeroCard":
                 top = QColor(15, 23, 42, 230)
                 bottom = QColor(2, 6, 23, 220)
-                border = QColor(34, 197, 94, 96)
+                border = QColor(56, 189, 248, 78)
             elif card_name == "SettingsCard":
                 top = QColor(15, 23, 42, 236)
                 bottom = QColor(2, 6, 23, 230)
-                border = QColor(45, 212, 191, 94)
+                border = QColor(59, 130, 246, 74)
             elif card_name == "StatCard":
                 top = QColor(30, 41, 59, 228)
                 bottom = QColor(15, 23, 42, 220)
-                border = QColor(34, 197, 94, 84)
+                border = QColor(71, 85, 105, 92)
             else:
                 top = QColor(15, 23, 42, 228)
                 bottom = QColor(2, 6, 23, 220)
-                border = QColor(45, 212, 191, 88)
+                border = QColor(71, 85, 105, 86)
         else:
             if card_name == "HeroCard":
                 top = QColor(255, 255, 255, 220)
@@ -176,21 +176,8 @@ class MainWindow(QWidget):
         self._init_ui_state()
 
     def _apply_blur_effect(self):
-        """Apply Windows acrylic blur when available."""
-        try:
-            from src.window_effects import WindowEffect
-
-            self._window_effect = WindowEffect()
-
-            def apply_and_track():
-                self._blur_active = self._window_effect.set_acrylic(self.winId())
-                self._window_effect.set_rounded_corners(self.winId())
-                if self._blur_active:
-                    self.update()
-
-            QTimer.singleShot(100, apply_and_track)
-        except ImportError:
-            self._blur_active = False
+        """Keep composition stable by avoiding acrylic blur on startup."""
+        self._blur_active = False
 
     def _normalize_appearance_mode(self, mode):
         normalized = str(mode or "auto").strip().lower()
@@ -390,23 +377,9 @@ class MainWindow(QWidget):
                 background: #e2e8f0;
             }
 
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 7px solid #64748b;
-                margin-right: 8px;
-            }
-
             QComboBox:disabled::drop-down {
                 background: #f1f5f9;
                 border-left: 1px solid #e2e8f0;
-            }
-
-            QComboBox:disabled::down-arrow {
-                border-top: 7px solid #94a3b8;
             }
 
             QComboBox QAbstractItemView {
@@ -496,12 +469,12 @@ class MainWindow(QWidget):
             }
 
             QFrame#HeaderBar {
-                border: 1px solid rgba(45, 212, 191, 0.42);
-                background: rgba(2, 6, 23, 0.78);
+                border: 1px solid rgba(71, 85, 105, 0.62);
+                background: rgba(6, 12, 28, 0.90);
             }
 
             QLabel#WindowTitle {
-                color: #ecfeff;
+                color: #e2e8f0;
             }
 
             QLabel#Subtitle {
@@ -562,7 +535,7 @@ class MainWindow(QWidget):
 
             QLabel#SectionCaption,
             QLabel#StatTitle {
-                color: #7dd3fc;
+                color: #93c5fd;
             }
 
             QComboBox {
@@ -602,23 +575,9 @@ class MainWindow(QWidget):
                 background: #1e293b;
             }
 
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 7px solid #94a3b8;
-                margin-right: 8px;
-            }
-
             QComboBox:disabled::drop-down {
                 background: #0b1220;
                 border-left: 1px solid #1e293b;
-            }
-
-            QComboBox:disabled::down-arrow {
-                border-top: 7px solid #64748b;
             }
 
             QComboBox QAbstractItemView {
@@ -1153,7 +1112,8 @@ class MainWindow(QWidget):
         super().showEvent(event)
         if self.layout() is not None:
             self.layout().activate()
-        QTimer.singleShot(0, self.update)
+        self.repaint()
+        QTimer.singleShot(0, self.repaint)
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -1177,9 +1137,9 @@ class MainWindow(QWidget):
                 border_color = QColor(45, 212, 191, 136)
             else:
                 gradient = QLinearGradient(0, 0, 0, self.height())
-                gradient.setColorAt(0.0, QColor(2, 6, 23, 246))
-                gradient.setColorAt(1.0, QColor(15, 23, 42, 246))
-                border_color = QColor(30, 41, 59, 180)
+                gradient.setColorAt(0.0, QColor(3, 7, 18, 252))
+                gradient.setColorAt(1.0, QColor(10, 18, 34, 252))
+                border_color = QColor(51, 65, 85, 220)
         else:
             if self._blur_active:
                 gradient = QLinearGradient(0, 0, 0, self.height())
