@@ -141,3 +141,17 @@ def test_api_key_empty_shows_error(app, qtbot, mock_config):
 
     assert window.api_key_hint.text() == "Enter a valid Groq API key."
     assert window.api_key_save_btn.isEnabled() is True
+
+
+def test_resize_hit_edges_detected(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.resize(960, 640)
+
+    top_left = window._resize_edges_at(window.rect().topLeft())
+    bottom_right = window._resize_edges_at(window.rect().bottomRight())
+
+    assert top_left & window._RESIZE_LEFT
+    assert top_left & window._RESIZE_TOP
+    assert bottom_right & window._RESIZE_RIGHT
+    assert bottom_right & window._RESIZE_BOTTOM

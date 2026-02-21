@@ -11,7 +11,7 @@ from PyQt6.QtCore import (
     pyqtProperty,
     QEvent,
 )
-from PyQt6.QtGui import QColor, QPainter, QBrush, QPen, QLinearGradient, QRadialGradient, QFont, QPalette
+from PyQt6.QtGui import QColor, QPainter, QBrush, QPen, QLinearGradient, QRadialGradient, QFont, QPalette, QCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QFrame,
-    QGraphicsOpacityEffect,
 )
 
 
@@ -155,9 +154,13 @@ class MainWindow(QWidget):
         self.setMinimumSize(QSize(860, 560))
 
         self._blur_active = False
-        self._intro_animations = []
         self._dragging = False
         self.oldPos = self.pos()
+        self._resizing = False
+        self._resize_margin = 8
+        self._resize_edges = 0
+        self._press_global_pos = QPoint()
+        self._press_geometry = self.geometry()
         self._appearance_mode = self._normalize_appearance_mode(self.config.get("appearance_mode", "auto"))
         self._is_dark_theme = self._resolve_dark_theme()
 
@@ -171,7 +174,6 @@ class MainWindow(QWidget):
         self.is_recording = False
         self.setup_ui()
         self._init_ui_state()
-        self._play_intro_animation()
 
     def _apply_blur_effect(self):
         """Apply Windows acrylic blur when available."""
@@ -893,26 +895,6 @@ class MainWindow(QWidget):
 
         return card, value
 
-    def _play_intro_animation(self):
-        """Stagger card fade-ins so the shell feels intentional and responsive."""
-        self._intro_animations.clear()
-        targets = [self._header_widget, self.hero_card, self.stats_row, self.connection_card, self.settings_card]
-
-        for index, target in enumerate(targets):
-            effect = QGraphicsOpacityEffect(target)
-            effect.setOpacity(0.0)
-            target.setGraphicsEffect(effect)
-
-            animation = QPropertyAnimation(effect, b"opacity", self)
-            animation.setDuration(280)
-            animation.setStartValue(0.0)
-            animation.setEndValue(1.0)
-            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self._intro_animations.append(animation)
-
-            QTimer.singleShot(index * 70, animation.start)
-
-
     def _set_status_badge(self, text, state):
         self.status_label.setText(text)
         self.status_label.setProperty("state", state)
@@ -974,24 +956,113 @@ class MainWindow(QWidget):
         self._refresh_pipeline_summary()
         self._refresh_theme_widgets()
 
-    # Frameless window dragging
+    # Frameless window dragging / resizing
+    _RESIZE_LEFT = 0x1
+    _RESIZE_RIGHT = 0x2
+    _RESIZE_TOP = 0x4
+    _RESIZE_BOTTOM = 0x8
+
+    def _resize_edges_at(self, pos):
+        x = pos.x()
+        y = pos.y()
+        w = self.width()
+        h = self.height()
+        m = self._resize_margin
+
+        edges = 0
+        if x <= m:
+            edges |= self._RESIZE_LEFT
+        elif x >= w - m:
+            edges |= self._RESIZE_RIGHT
+
+        if y <= m:
+            edges |= self._RESIZE_TOP
+        elif y >= h - m:
+            edges |= self._RESIZE_BOTTOM
+
+        return edges
+
+    def _cursor_for_edges(self, edges):
+        diagonal_left = self._RESIZE_LEFT | self._RESIZE_TOP
+        diagonal_right = self._RESIZE_RIGHT | self._RESIZE_BOTTOM
+        diagonal_other_left = self._RESIZE_LEFT | self._RESIZE_BOTTOM
+        diagonal_other_right = self._RESIZE_RIGHT | self._RESIZE_TOP
+
+        if edges in (diagonal_left, diagonal_right):
+            return Qt.CursorShape.SizeFDiagCursor
+        if edges in (diagonal_other_left, diagonal_other_right):
+            return Qt.CursorShape.SizeBDiagCursor
+        if edges & (self._RESIZE_LEFT | self._RESIZE_RIGHT):
+            return Qt.CursorShape.SizeHorCursor
+        if edges & (self._RESIZE_TOP | self._RESIZE_BOTTOM):
+            return Qt.CursorShape.SizeVerCursor
+        return Qt.CursorShape.ArrowCursor
+
+    def _apply_resize(self, global_pos):
+        delta = global_pos - self._press_global_pos
+        geom = self._press_geometry
+
+        min_w = self.minimumWidth()
+        min_h = self.minimumHeight()
+
+        left = geom.left()
+        right = geom.right()
+        top = geom.top()
+        bottom = geom.bottom()
+
+        if self._resize_edges & self._RESIZE_LEFT:
+            left = min(left + delta.x(), right - min_w + 1)
+        if self._resize_edges & self._RESIZE_RIGHT:
+            right = max(right + delta.x(), left + min_w - 1)
+        if self._resize_edges & self._RESIZE_TOP:
+            top = min(top + delta.y(), bottom - min_h + 1)
+        if self._resize_edges & self._RESIZE_BOTTOM:
+            bottom = max(bottom + delta.y(), top + min_h - 1)
+
+        self.setGeometry(left, top, right - left + 1, bottom - top + 1)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.oldPos = event.globalPosition().toPoint()
-            self._dragging = True
+            edges = self._resize_edges_at(event.position().toPoint())
+            if edges:
+                self._resizing = True
+                self._resize_edges = edges
+                self._press_global_pos = event.globalPosition().toPoint()
+                self._press_geometry = self.geometry()
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        self._dragging = False
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = False
+            self._resizing = False
+            self._resize_edges = 0
+        super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._resizing:
+            self._apply_resize(event.globalPosition().toPoint())
+            event.accept()
+            return
+
         if self._dragging:
             delta = event.globalPosition().toPoint() - self.oldPos
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self.oldPos = event.globalPosition().toPoint()
+            event.accept()
+            return
+
+        edges = self._resize_edges_at(event.position().toPoint())
+        self.setCursor(self._cursor_for_edges(edges))
+        super().mouseMoveEvent(event)
 
     def eventFilter(self, obj, event):
         if obj == getattr(self, "_header_widget", None):
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                edges = self._resize_edges_at(event.position().toPoint())
+                if edges:
+                    return False
                 self.oldPos = event.globalPosition().toPoint()
                 self._dragging = True
                 return True
@@ -1007,6 +1078,13 @@ class MainWindow(QWidget):
                 return True
 
         return super().eventFilter(obj, event)
+
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.layout() is not None:
+            self.layout().activate()
+        QTimer.singleShot(0, self.update)
 
     def changeEvent(self, event):
         super().changeEvent(event)
