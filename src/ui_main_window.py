@@ -365,17 +365,48 @@ class MainWindow(QWidget):
                 border: 1px solid #0ea5e9;
             }
 
+            QComboBox:disabled,
+            QLineEdit:disabled {
+                color: #94a3b8;
+                background: #f1f5f9;
+                border: 1px solid #e2e8f0;
+            }
+
+            QLabel:disabled {
+                color: #94a3b8;
+            }
+
             QComboBox::drop-down {
-                border: none;
-                width: 20px;
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 28px;
+                border-left: 1px solid #cbd5e1;
+                border-top-right-radius: 10px;
+                border-bottom-right-radius: 10px;
+                background: #f8fafc;
+            }
+
+            QComboBox::drop-down:hover {
+                background: #e2e8f0;
             }
 
             QComboBox::down-arrow {
                 image: none;
+                width: 0px;
+                height: 0px;
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 6px solid #64748b;
-                margin-right: 6px;
+                border-top: 7px solid #64748b;
+                margin-right: 8px;
+            }
+
+            QComboBox:disabled::drop-down {
+                background: #f1f5f9;
+                border-left: 1px solid #e2e8f0;
+            }
+
+            QComboBox:disabled::down-arrow {
+                border-top: 7px solid #94a3b8;
             }
 
             QComboBox QAbstractItemView {
@@ -548,8 +579,46 @@ class MainWindow(QWidget):
                 border: 1px solid #22c55e;
             }
 
+            QComboBox:disabled,
+            QLineEdit:disabled {
+                color: #64748b;
+                background: #0b1220;
+                border: 1px solid #1e293b;
+            }
+
+            QLabel:disabled {
+                color: #64748b;
+            }
+
+            QComboBox::drop-down {
+                width: 28px;
+                border-left: 1px solid #334155;
+                border-top-right-radius: 10px;
+                border-bottom-right-radius: 10px;
+                background: #0f172a;
+            }
+
+            QComboBox::drop-down:hover {
+                background: #1e293b;
+            }
+
             QComboBox::down-arrow {
-                border-top: 6px solid #94a3b8;
+                image: none;
+                width: 0px;
+                height: 0px;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 7px solid #94a3b8;
+                margin-right: 8px;
+            }
+
+            QComboBox:disabled::drop-down {
+                background: #0b1220;
+                border-left: 1px solid #1e293b;
+            }
+
+            QComboBox:disabled::down-arrow {
+                border-top: 7px solid #64748b;
             }
 
             QComboBox QAbstractItemView {

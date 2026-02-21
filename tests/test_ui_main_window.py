@@ -62,10 +62,16 @@ def test_toggle_formatter(app, qtbot, mock_config):
     
     # Initially False
     assert window.model_combo.isEnabled() is False
+    assert window.model_label.isEnabled() is False
+    assert window.translation_toggle.isEnabled() is False
+    assert window.language_input.isEnabled() is False
+    assert window.language_label.isEnabled() is False
     
     # Toggle On
     window.format_toggle.setChecked(True)
     assert window.model_combo.isEnabled() is True
+    assert window.model_label.isEnabled() is True
+    assert window.translation_toggle.isEnabled() is True
     
     # Click SAVE no longer needed - auto-save on toggle change
     mock_config.set.assert_any_call("use_formatter", True)
