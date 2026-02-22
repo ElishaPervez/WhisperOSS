@@ -34,4 +34,9 @@ config.json
 .jules/
 gha-creds-*.json
 
+# Local-only directories (do not publish)
+.github/
+Antigravity-Manager-4.1.22/
+antigravity-manager-4.1.22/
+
 personal run.bat

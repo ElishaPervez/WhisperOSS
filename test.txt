@@ -1,0 +1,3 @@
+WSL->Windows sync demo
+Created on 2026-02-22
+If you can read this in C:\projects\WhisperOSS\test.txt, auto-sync is working.
