@@ -152,3 +152,32 @@ def test_api_key_empty_shows_error(app, qtbot, mock_config):
 
     assert window.api_key_hint.text() == "Enter a valid Groq API key."
     assert window.api_key_save_btn.isEnabled() is True
+
+def test_proxy_toggle_emits_config_changed_and_reveals_setup(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+    assert window.proxy_url_input.isEnabled() is False
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.proxy_search_toggle.setChecked(True)
+
+    assert blocker.args[0] == "use_antigravity_proxy_search"
+    assert blocker.args[1] is True
+    assert window.proxy_url_input.isEnabled() is True
+    mock_config.set.assert_any_call("use_antigravity_proxy_search", True)
+    mock_config.save.assert_called()
+
+def test_proxy_url_change_emits_config_changed(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.proxy_search_toggle.setChecked(True)
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.proxy_url_input.setText("http://127.0.0.1:9000")
+        window.on_proxy_url_changed()
+
+    assert blocker.args[0] == "antigravity_proxy_url"
+    assert blocker.args[1] == "http://127.0.0.1:9000"

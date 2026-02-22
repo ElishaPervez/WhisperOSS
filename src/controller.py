@@ -16,6 +16,7 @@ from PyQt6.QtGui import QIcon, QAction, QCursor
 from src.config_manager import ConfigManager
 from src.audio_recorder import AudioRecorder
 from src.groq_client import GroqClient
+from src.proxy_search_client import ProxySearchClient
 from src.hotkey_manager import HotkeyManager
 from src.ui_main_window import MainWindow
 from src.ui_onboarding import SetupMessageDialog, ApiKeyInputDialog
@@ -73,6 +74,14 @@ class WhisperAppController(QObject):
         # Check for first run (no API key) and prompt before initializing
         self._check_first_run_api_key()
         self.groq = GroqClient(self.config.get("api_key"))
+        self.search_client = ProxySearchClient(
+            base_url=self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045"),
+            api_key=self.config.get("antigravity_api_key", ""),
+            primary_model=self.config.get("antigravity_search_model", "gemini-3-flash"),
+            fallback_model=self.config.get(
+                "antigravity_search_fallback_model", "gemini-2.5-flash"
+            ),
+        )
         self.recorder = AudioRecorder(self.config.get("input_device_index"))
 
         # Standard Hotkey: Ctrl+Win (Transcribe)
@@ -242,6 +251,23 @@ class WhisperAppController(QObject):
             self.recorder.update_device(value)
         elif key == "animation_fps":
             self.visualizer.set_animation_fps(value)
+        elif key in {
+            "use_antigravity_proxy_search",
+            "antigravity_proxy_url",
+            "antigravity_api_key",
+            "antigravity_search_model",
+            "antigravity_search_fallback_model",
+        }:
+            self.config.set(key, value)
+            self.config.save()
+            self.search_client.update_config(
+                base_url=self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045"),
+                api_key=self.config.get("antigravity_api_key", ""),
+                primary_model=self.config.get("antigravity_search_model", "gemini-3-flash"),
+                fallback_model=self.config.get(
+                    "antigravity_search_fallback_model", "gemini-2.5-flash"
+                ),
+            )
 
     def refresh_models(self) -> None:
         # In a real app, do this async
@@ -317,9 +343,20 @@ class WhisperAppController(QObject):
 
         if self.recording_mode == "search":
             # Quick Answer Mode
-            logger.info(f"Starting Quick Answer search (Refiner: {fmt_model})...")
+            use_proxy_search = bool(self.config.get("use_antigravity_proxy_search", False))
+            provider_name = "Antigravity Proxy" if use_proxy_search else "Groq Compound"
+            logger.info(
+                "Starting Quick Answer search (Provider: %s, Refiner: %s)...",
+                provider_name,
+                fmt_model,
+            )
             # Reuse the formatter model (High Intelligence) for refinement
-            self.worker = SearchWorker(self.groq, audio_source, refinement_model_id=fmt_model)
+            self.worker = SearchWorker(
+                self.groq,
+                audio_source,
+                refinement_model_id=fmt_model,
+                search_client=self.search_client if use_proxy_search else None,
+            )
             self.worker.finished.connect(self.on_search_complete)
             self.worker.error.connect(self.show_error)
             self.worker.start()

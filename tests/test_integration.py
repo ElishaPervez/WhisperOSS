@@ -93,5 +93,36 @@ class TestIntegration(unittest.TestCase):
         error_signal.assert_not_called()
         print("Search Pipeline: PASS")
 
+    def test_search_pipeline_proxy_fallback_to_groq(self):
+        """Proxy search errors should automatically fall back to Groq search."""
+        print("\nRunning Search Pipeline Proxy Fallback Smoke Test...")
+
+        self.mock_groq.transcribe.return_value = "What is the weather in Karachi?"
+        self.mock_groq.format_text.return_value = "weather in karachi now"
+        self.mock_groq.run_search.return_value = "Karachi: 25°C, 57% humidity"
+
+        mock_proxy = MagicMock()
+        mock_proxy.run_search.side_effect = RuntimeError("proxy offline")
+
+        worker = SearchWorker(
+            groq_client=self.mock_groq,
+            audio_file=self.mock_audio,
+            search_client=mock_proxy,
+        )
+
+        result_signal = MagicMock()
+        worker.finished.connect(result_signal)
+
+        error_signal = MagicMock()
+        worker.error.connect(error_signal)
+
+        worker.run()
+
+        mock_proxy.run_search.assert_called_once_with("weather in karachi now")
+        self.mock_groq.run_search.assert_called_once_with("weather in karachi now")
+        result_signal.assert_called_once_with("Karachi: 25°C, 57% humidity")
+        error_signal.assert_not_called()
+        print("Search Pipeline Proxy Fallback: PASS")
+
 if __name__ == "__main__":
     unittest.main()

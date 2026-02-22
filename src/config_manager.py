@@ -22,6 +22,12 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "transcription_model": "whisper-large-v3",
     "formatter_model": "openai/gpt-oss-120b",  # Default fast/smart model
+    # Quick-answer web search provider. Default stays Groq for out-of-box usability.
+    "use_antigravity_proxy_search": False,
+    "antigravity_proxy_url": "http://127.0.0.1:8045",
+    "antigravity_api_key": "",
+    "antigravity_search_model": "gemini-3-flash",
+    "antigravity_search_fallback_model": "gemini-2.5-flash",
     "input_device_index": None, # None means default
     "appearance_mode": "auto",  # auto | dark | light
     "animation_fps": 100,

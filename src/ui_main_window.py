@@ -9,7 +9,18 @@ from PyQt6.QtCore import (
     pyqtProperty,
     QEvent,
 )
-from PyQt6.QtGui import QColor, QPainter, QBrush, QPen, QLinearGradient, QRadialGradient, QFont, QPalette
+from PyQt6.QtGui import (
+    QColor,
+    QPainter,
+    QBrush,
+    QPen,
+    QLinearGradient,
+    QRadialGradient,
+    QFont,
+    QPalette,
+    QPainterPath,
+    QRegion,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -21,6 +32,8 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QFrame,
+    QTabWidget,
+    QScrollArea,
     QGraphicsOpacityEffect,
 )
 
@@ -181,21 +194,21 @@ class GlassPanel(QFrame):
         card_name = self.objectName()
         if dark_theme:
             if card_name == "HeroCard":
-                top = QColor(18, 29, 47, 238)
-                bottom = QColor(12, 20, 34, 234)
-                border = QColor(93, 143, 212, 118)
+                top = QColor(18, 29, 47, 248)
+                bottom = QColor(12, 20, 34, 246)
+                border = QColor(70, 108, 160, 86)
             elif card_name == "SettingsCard":
-                top = QColor(15, 24, 40, 238)
-                bottom = QColor(10, 17, 30, 234)
-                border = QColor(67, 98, 142, 116)
+                top = QColor(15, 24, 40, 248)
+                bottom = QColor(10, 17, 30, 246)
+                border = QColor(64, 96, 140, 82)
             elif card_name == "StatCard":
-                top = QColor(22, 34, 53, 234)
-                bottom = QColor(14, 24, 39, 230)
-                border = QColor(78, 113, 163, 110)
+                top = QColor(22, 34, 53, 246)
+                bottom = QColor(14, 24, 39, 244)
+                border = QColor(68, 102, 150, 84)
             else:
-                top = QColor(15, 24, 40, 236)
-                bottom = QColor(10, 18, 31, 232)
-                border = QColor(67, 98, 142, 108)
+                top = QColor(15, 24, 40, 246)
+                bottom = QColor(10, 18, 31, 244)
+                border = QColor(64, 96, 140, 80)
         else:
             if card_name == "HeroCard":
                 top = QColor(255, 255, 255, 220)
@@ -436,6 +449,33 @@ class MainWindow(QWidget):
                 font-weight: 700;
             }
 
+            QTabWidget#SettingsTabs::pane {
+                border: none;
+                background: transparent;
+                margin-top: 4px;
+            }
+
+            QTabWidget#SettingsTabs QTabBar::tab {
+                border: 1px solid rgba(148, 163, 184, 0.56);
+                border-radius: 10px;
+                padding: 6px 12px;
+                margin-right: 6px;
+                background: rgba(241, 245, 249, 0.78);
+                color: #334155;
+                font-weight: 600;
+            }
+
+            QTabWidget#SettingsTabs QTabBar::tab:selected {
+                border: 1px solid #0ea5e9;
+                background: rgba(224, 242, 254, 0.92);
+                color: #0f172a;
+            }
+
+            QTabWidget#SettingsTabs QTabBar::tab:hover:!selected {
+                border: 1px solid #94a3b8;
+                background: rgba(226, 232, 240, 0.88);
+            }
+
             QComboBox {
                 border: 1px solid #cbd5e1;
                 border-radius: 10px;
@@ -540,6 +580,17 @@ class MainWindow(QWidget):
                 color: #b91c1c;
             }
 
+            QFrame#ProxyHelp {
+                border: 1px solid rgba(248, 113, 113, 0.34);
+                border-radius: 10px;
+                background: rgba(254, 226, 226, 0.46);
+            }
+
+            QScrollArea#ProxyHelpScroll {
+                border: none;
+                background: transparent;
+            }
+
             QFrame#Divider {
                 min-height: 1px;
                 max-height: 1px;
@@ -622,6 +673,30 @@ class MainWindow(QWidget):
                 color: #8fc4ff;
             }
 
+            QTabWidget#SettingsTabs::pane {
+                border: none;
+                background: transparent;
+                margin-top: 4px;
+            }
+
+            QTabWidget#SettingsTabs QTabBar::tab {
+                border: 1px solid #35507a;
+                border-radius: 10px;
+                background: rgba(17, 28, 47, 0.82);
+                color: #bcd0ed;
+            }
+
+            QTabWidget#SettingsTabs QTabBar::tab:selected {
+                border: 1px solid #4d8ad0;
+                background: rgba(24, 44, 72, 0.96);
+                color: #edf4ff;
+            }
+
+            QTabWidget#SettingsTabs QTabBar::tab:hover:!selected {
+                border: 1px solid #4d8ad0;
+                background: rgba(27, 45, 72, 0.90);
+            }
+
             QComboBox {
                 border: 1px solid #35507a;
                 background: rgba(10, 16, 28, 0.94);
@@ -696,6 +771,17 @@ class MainWindow(QWidget):
 
             QLabel#ApiHint[state='error'] {
                 color: #ffc3d2;
+            }
+
+            QFrame#ProxyHelp {
+                border: 1px solid rgba(188, 79, 103, 0.64);
+                border-radius: 10px;
+                background: rgba(60, 21, 30, 0.68);
+            }
+
+            QScrollArea#ProxyHelpScroll {
+                border: none;
+                background: transparent;
             }
 
             QFrame#Divider {
@@ -863,22 +949,36 @@ class MainWindow(QWidget):
         settings_title.setObjectName("CardTitle")
         settings_layout.addWidget(settings_title)
 
+        self.settings_tabs = QTabWidget()
+        self.settings_tabs.setObjectName("SettingsTabs")
+        self.settings_tabs.setDocumentMode(True)
+        self.settings_tabs.tabBar().setExpanding(True)
+        self.settings_tabs.tabBar().setUsesScrollButtons(False)
+        self.settings_tabs.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
+        settings_layout.addWidget(self.settings_tabs, 1)
+
+        # Pipeline tab
+        pipeline_tab = QWidget()
+        pipeline_layout = QVBoxLayout(pipeline_tab)
+        pipeline_layout.setContentsMargins(8, 10, 8, 8)
+        pipeline_layout.setSpacing(12)
+
         input_caption = QLabel("Audio")
         input_caption.setObjectName("SectionCaption")
-        settings_layout.addWidget(input_caption)
+        pipeline_layout.addWidget(input_caption)
 
-        settings_layout.addWidget(QLabel("Microphone"))
+        pipeline_layout.addWidget(QLabel("Microphone"))
         self.device_combo = QComboBox()
         self.device_combo.currentIndexChanged.connect(self.on_device_changed)
-        settings_layout.addWidget(self.device_combo)
+        pipeline_layout.addWidget(self.device_combo)
 
         divider_1 = QFrame()
         divider_1.setObjectName("Divider")
-        settings_layout.addWidget(divider_1)
+        pipeline_layout.addWidget(divider_1)
 
         ai_caption = QLabel("AI Pipeline")
         ai_caption.setObjectName("SectionCaption")
-        settings_layout.addWidget(ai_caption)
+        pipeline_layout.addWidget(ai_caption)
 
         formatter_row = QHBoxLayout()
         formatter_label = QLabel("AI Formatting")
@@ -888,21 +988,26 @@ class MainWindow(QWidget):
         formatter_row.addWidget(formatter_label)
         formatter_row.addStretch()
         formatter_row.addWidget(self.format_toggle)
-        settings_layout.addLayout(formatter_row)
+        pipeline_layout.addLayout(formatter_row)
 
         self.model_label = QLabel("Formatter Model")
-        settings_layout.addWidget(self.model_label)
+        pipeline_layout.addWidget(self.model_label)
         self.model_combo = QComboBox()
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
-        settings_layout.addWidget(self.model_combo)
+        pipeline_layout.addWidget(self.model_combo)
+        pipeline_layout.addStretch()
 
-        divider_2 = QFrame()
-        divider_2.setObjectName("Divider")
-        settings_layout.addWidget(divider_2)
+        self.settings_tabs.addTab(pipeline_tab, "Pipeline")
+
+        # Output tab
+        output_tab = QWidget()
+        output_layout = QVBoxLayout(output_tab)
+        output_layout.setContentsMargins(8, 10, 8, 8)
+        output_layout.setSpacing(12)
 
         output_caption = QLabel("Output")
         output_caption.setObjectName("SectionCaption")
-        settings_layout.addWidget(output_caption)
+        output_layout.addWidget(output_caption)
 
         translation_row = QHBoxLayout()
         translation_label = QLabel("Translation")
@@ -912,10 +1017,10 @@ class MainWindow(QWidget):
         translation_row.addWidget(translation_label)
         translation_row.addStretch()
         translation_row.addWidget(self.translation_toggle)
-        settings_layout.addLayout(translation_row)
+        output_layout.addLayout(translation_row)
 
         self.language_label = QLabel("Target Language")
-        settings_layout.addWidget(self.language_label)
+        output_layout.addWidget(self.language_label)
 
         self.language_input = QComboBox()
         self.language_input.setEditable(True)
@@ -940,33 +1045,153 @@ class MainWindow(QWidget):
         self.language_input.setCurrentText(current_lang)
         self.language_input.lineEdit().setPlaceholderText("Select or type language")
         self.language_input.currentTextChanged.connect(self.on_language_changed)
-        settings_layout.addWidget(self.language_input)
+        output_layout.addWidget(self.language_input)
+        output_layout.addStretch()
 
-        divider_3 = QFrame()
-        divider_3.setObjectName("Divider")
-        settings_layout.addWidget(divider_3)
+        self.settings_tabs.addTab(output_tab, "Output")
+
+        # Advanced tab (scrollable so it never clips controls)
+        advanced_tab = QScrollArea()
+        advanced_tab.setObjectName("AdvancedTabScroll")
+        advanced_tab.setWidgetResizable(True)
+        advanced_tab.setFrameShape(QFrame.Shape.NoFrame)
+        advanced_tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        advanced_page = QWidget()
+        advanced_layout = QVBoxLayout(advanced_page)
+        advanced_layout.setContentsMargins(8, 10, 8, 8)
+        advanced_layout.setSpacing(12)
+
+        proxy_row = QHBoxLayout()
+        self.proxy_search_label = QLabel("Antigravity Proxy (Search)")
+        self.proxy_search_toggle = AnimatedToggle()
+        self.proxy_search_toggle.setChecked(
+            bool(self.config.get("use_antigravity_proxy_search", False))
+        )
+        self.proxy_search_toggle.stateChanged.connect(self.on_proxy_search_toggle_changed)
+        proxy_row.addWidget(self.proxy_search_label)
+        proxy_row.addStretch()
+        proxy_row.addWidget(self.proxy_search_toggle)
+        advanced_layout.addLayout(proxy_row)
+
+        # Collapsible instructions panel with animation + internal scrolling.
+        self.proxy_setup_container = QFrame()
+        self.proxy_setup_container.setObjectName("ProxyHelp")
+        self.proxy_setup_container.setMaximumHeight(0)
+        self.proxy_setup_container.setMinimumHeight(0)
+        proxy_setup_outer = QVBoxLayout(self.proxy_setup_container)
+        proxy_setup_outer.setContentsMargins(8, 8, 8, 8)
+        proxy_setup_outer.setSpacing(0)
+
+        self.proxy_setup_scroll = QScrollArea()
+        self.proxy_setup_scroll.setObjectName("ProxyHelpScroll")
+        self.proxy_setup_scroll.setWidgetResizable(True)
+        self.proxy_setup_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.proxy_setup_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.proxy_setup_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        proxy_setup_content = QWidget()
+        proxy_setup_content_layout = QVBoxLayout(proxy_setup_content)
+        proxy_setup_content_layout.setContentsMargins(0, 0, 0, 0)
+        proxy_setup_content_layout.setSpacing(0)
+        self.proxy_setup_hint = QLabel(
+            "Advanced mode. Not out-of-the-box.\n"
+            "Setup steps:\n"
+            "1) Install and run Antigravity Manager (proxy) locally.\n"
+            "2) Start the proxy and keep it reachable (default: http://127.0.0.1:8045).\n"
+            "3) Enable MCP Web Search in Antigravity Manager.\n"
+            "4) Paste the proxy API key below and choose search-capable models."
+        )
+        self.proxy_setup_hint.setObjectName("ApiHint")
+        self.proxy_setup_hint.setProperty("state", "error")
+        self.proxy_setup_hint.setWordWrap(True)
+        proxy_setup_content_layout.addWidget(self.proxy_setup_hint)
+        self.proxy_setup_scroll.setWidget(proxy_setup_content)
+        proxy_setup_outer.addWidget(self.proxy_setup_scroll)
+        advanced_layout.addWidget(self.proxy_setup_container)
+
+        self.proxy_setup_anim = QPropertyAnimation(self.proxy_setup_container, b"maximumHeight", self)
+        self.proxy_setup_anim.setDuration(220)
+        self.proxy_setup_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self.proxy_url_label = QLabel("Proxy Base URL")
+        advanced_layout.addWidget(self.proxy_url_label)
+        self.proxy_url_input = QLineEdit()
+        self.proxy_url_input.setPlaceholderText("http://127.0.0.1:8045")
+        self.proxy_url_input.setText(self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045"))
+        self.proxy_url_input.editingFinished.connect(self.on_proxy_url_changed)
+        advanced_layout.addWidget(self.proxy_url_input)
+
+        self.proxy_api_key_label = QLabel("Proxy API Key")
+        advanced_layout.addWidget(self.proxy_api_key_label)
+        proxy_api_row = QHBoxLayout()
+        proxy_api_row.setSpacing(8)
+        self.proxy_api_key_input = QLineEdit()
+        self.proxy_api_key_input.setPlaceholderText("Optional proxy API key")
+        self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.proxy_api_key_input.setText(self.config.get("antigravity_api_key", ""))
+        self.proxy_api_key_input.editingFinished.connect(self.on_proxy_api_key_changed)
+        proxy_api_row.addWidget(self.proxy_api_key_input, 1)
+        self.proxy_api_key_toggle_btn = QPushButton("Show")
+        self.proxy_api_key_toggle_btn.setObjectName("SoftButton")
+        self.proxy_api_key_toggle_btn.setFixedWidth(76)
+        self.proxy_api_key_toggle_btn.clicked.connect(self.on_proxy_api_key_toggle_visibility)
+        proxy_api_row.addWidget(self.proxy_api_key_toggle_btn)
+        advanced_layout.addLayout(proxy_api_row)
+
+        self.proxy_model_label = QLabel("Proxy Search Model")
+        advanced_layout.addWidget(self.proxy_model_label)
+        self.proxy_model_input = QLineEdit()
+        self.proxy_model_input.setPlaceholderText("gemini-3-flash")
+        self.proxy_model_input.setText(self.config.get("antigravity_search_model", "gemini-3-flash"))
+        self.proxy_model_input.editingFinished.connect(self.on_proxy_model_changed)
+        advanced_layout.addWidget(self.proxy_model_input)
+
+        self.proxy_fallback_model_label = QLabel("Proxy Fallback Model")
+        advanced_layout.addWidget(self.proxy_fallback_model_label)
+        self.proxy_fallback_model_input = QLineEdit()
+        self.proxy_fallback_model_input.setPlaceholderText("gemini-2.5-flash")
+        self.proxy_fallback_model_input.setText(
+            self.config.get("antigravity_search_fallback_model", "gemini-2.5-flash")
+        )
+        self.proxy_fallback_model_input.editingFinished.connect(
+            self.on_proxy_fallback_model_changed
+        )
+        advanced_layout.addWidget(self.proxy_fallback_model_input)
+        advanced_layout.addStretch()
+
+        advanced_tab.setWidget(advanced_page)
+        self.settings_tabs.addTab(advanced_tab, "Advanced")
+
+        # Appearance tab
+        appearance_tab = QWidget()
+        appearance_layout = QVBoxLayout(appearance_tab)
+        appearance_layout.setContentsMargins(8, 10, 8, 8)
+        appearance_layout.setSpacing(12)
 
         appearance_caption = QLabel("Appearance")
         appearance_caption.setObjectName("SectionCaption")
-        settings_layout.addWidget(appearance_caption)
+        appearance_layout.addWidget(appearance_caption)
 
-        settings_layout.addWidget(QLabel("Theme"))
+        appearance_layout.addWidget(QLabel("Theme"))
         self.appearance_combo = QComboBox()
         self.appearance_combo.addItems(["Auto", "Dark", "Light"])
         self.appearance_combo.currentTextChanged.connect(self.on_appearance_mode_changed)
-        settings_layout.addWidget(self.appearance_combo)
+        appearance_layout.addWidget(self.appearance_combo)
 
-        settings_layout.addWidget(QLabel("Animation FPS"))
+        appearance_layout.addWidget(QLabel("Animation FPS"))
         self.animation_fps_combo = QComboBox()
         self.animation_fps_combo.addItems(["60", "75", "90", "100", "120", "144", "165", "240"])
         self.animation_fps_combo.currentTextChanged.connect(self.on_animation_fps_changed)
-        settings_layout.addWidget(self.animation_fps_combo)
+        appearance_layout.addWidget(self.animation_fps_combo)
 
         note = QLabel("Changes are saved immediately and apply to the next recording.")
         note.setObjectName("MutedText")
         note.setWordWrap(True)
-        settings_layout.addWidget(note)
-        settings_layout.addStretch()
+        appearance_layout.addWidget(note)
+        appearance_layout.addStretch()
+
+        self.settings_tabs.addTab(appearance_tab, "Theme")
 
         content_layout.addWidget(left_column, 2)
         content_layout.addWidget(self.settings_card, 1)
@@ -1044,6 +1269,42 @@ class MainWindow(QWidget):
         self.pipeline_stat_value.setText(pipeline_text)
         self.output_stat_value.setText(output_text)
 
+    def _proxy_help_target_height(self):
+        if not hasattr(self, "proxy_setup_scroll"):
+            return 0
+        hint_height = self.proxy_setup_hint.sizeHint().height()
+        # Keep instructions in a compact area; allow scrolling for the full text.
+        return min(130, hint_height + 12)
+
+    def _animate_proxy_help(self, show):
+        if not hasattr(self, "proxy_setup_anim"):
+            return
+
+        start_height = self.proxy_setup_container.maximumHeight()
+        end_height = self._proxy_help_target_height() if show else 0
+        self.proxy_setup_anim.stop()
+        self.proxy_setup_anim.setStartValue(start_height)
+        self.proxy_setup_anim.setEndValue(end_height)
+        self.proxy_setup_anim.start()
+
+    def _set_proxy_settings_enabled(self, enabled, animate=False):
+        self.proxy_url_label.setEnabled(enabled)
+        self.proxy_url_input.setEnabled(enabled)
+        self.proxy_api_key_label.setEnabled(enabled)
+        self.proxy_api_key_input.setEnabled(enabled)
+        self.proxy_api_key_toggle_btn.setEnabled(enabled)
+        self.proxy_model_label.setEnabled(enabled)
+        self.proxy_model_input.setEnabled(enabled)
+        self.proxy_fallback_model_label.setEnabled(enabled)
+        self.proxy_fallback_model_input.setEnabled(enabled)
+
+        if animate:
+            self._animate_proxy_help(enabled)
+        else:
+            self.proxy_setup_container.setMaximumHeight(
+                self._proxy_help_target_height() if enabled else 0
+            )
+
     def _init_ui_state(self):
         """Initialize UI state based on config."""
         self._appearance_mode = self._normalize_appearance_mode(self.config.get("appearance_mode", "auto"))
@@ -1073,6 +1334,22 @@ class MainWindow(QWidget):
         self.translation_toggle.setChecked(translation_enabled)
         self.language_input.setEnabled(translation_enabled)
         self.language_label.setEnabled(translation_enabled)
+
+        proxy_enabled = bool(self.config.get("use_antigravity_proxy_search", False))
+        self.proxy_search_toggle.blockSignals(True)
+        self.proxy_search_toggle.setChecked(proxy_enabled)
+        self.proxy_search_toggle.blockSignals(False)
+        self.proxy_url_input.setText(
+            self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045")
+        )
+        self.proxy_api_key_input.setText(self.config.get("antigravity_api_key", ""))
+        self.proxy_model_input.setText(
+            self.config.get("antigravity_search_model", "gemini-3-flash")
+        )
+        self.proxy_fallback_model_input.setText(
+            self.config.get("antigravity_search_fallback_model", "gemini-2.5-flash")
+        )
+        self._set_proxy_settings_enabled(proxy_enabled, animate=False)
 
         self._refresh_pipeline_summary()
         self._refresh_theme_widgets()
@@ -1123,9 +1400,31 @@ class MainWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._update_window_mask()
         if not self._initial_layout_applied:
             self._initial_layout_applied = True
             QTimer.singleShot(0, self._ensure_initial_layout)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_window_mask()
+
+    def _update_window_mask(self):
+        # Explicit rounded mask avoids compositor white-corner artifacts on some systems.
+        if self.isMaximized():
+            self.clearMask()
+            return
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(
+            float(rect.x()),
+            float(rect.y()),
+            float(rect.width()),
+            float(rect.height()),
+            24.0,
+            24.0,
+        )
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     def _ensure_initial_layout(self):
         layout = self.layout()
@@ -1147,25 +1446,25 @@ class MainWindow(QWidget):
         if self._is_dark_theme:
             if self._blur_active:
                 gradient = QLinearGradient(0, 0, 0, self.height())
-                gradient.setColorAt(0.0, QColor(10, 16, 28, 226))
-                gradient.setColorAt(1.0, QColor(15, 24, 41, 226))
-                border_color = QColor(88, 124, 176, 126)
+                gradient.setColorAt(0.0, QColor(10, 16, 28, 246))
+                gradient.setColorAt(1.0, QColor(15, 24, 41, 246))
+                border_color = QColor(63, 91, 131, 92)
             else:
                 gradient = QLinearGradient(0, 0, 0, self.height())
                 gradient.setColorAt(0.0, QColor(10, 16, 28, 252))
                 gradient.setColorAt(1.0, QColor(15, 24, 41, 252))
-                border_color = QColor(74, 103, 143, 162)
+                border_color = QColor(62, 90, 128, 108)
         else:
             if self._blur_active:
                 gradient = QLinearGradient(0, 0, 0, self.height())
-                gradient.setColorAt(0.0, QColor(238, 242, 255, 168))
-                gradient.setColorAt(1.0, QColor(226, 232, 240, 168))
-                border_color = QColor(255, 255, 255, 110)
+                gradient.setColorAt(0.0, QColor(238, 242, 255, 224))
+                gradient.setColorAt(1.0, QColor(226, 232, 240, 224))
+                border_color = QColor(148, 163, 184, 78)
             else:
                 gradient = QLinearGradient(0, 0, 0, self.height())
                 gradient.setColorAt(0.0, QColor(241, 245, 249, 246))
                 gradient.setColorAt(1.0, QColor(226, 232, 240, 246))
-                border_color = QColor(148, 163, 184, 120)
+                border_color = QColor(148, 163, 184, 96)
 
         painter.setBrush(QBrush(gradient))
         shell_rect = self.rect().adjusted(2, 2, -2, -2)
@@ -1264,6 +1563,45 @@ class MainWindow(QWidget):
         self.config.set("animation_fps", fps)
         self.config.save()
         self.config_changed.emit("animation_fps", fps)
+
+    def on_proxy_search_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("use_antigravity_proxy_search", enabled)
+        self.config.save()
+        self._set_proxy_settings_enabled(enabled, animate=True)
+        if enabled and self.settings_tabs.currentIndex() != 2:
+            self.settings_tabs.setCurrentIndex(2)
+        self.config_changed.emit("use_antigravity_proxy_search", enabled)
+
+    def _save_proxy_field(self, key, text):
+        normalized = str(text or "").strip()
+        self.config.set(key, normalized)
+        self.config.save()
+        self.config_changed.emit(key, normalized)
+
+    def on_proxy_url_changed(self):
+        self._save_proxy_field("antigravity_proxy_url", self.proxy_url_input.text())
+
+    def on_proxy_api_key_changed(self):
+        self._save_proxy_field("antigravity_api_key", self.proxy_api_key_input.text())
+
+    def on_proxy_model_changed(self):
+        self._save_proxy_field("antigravity_search_model", self.proxy_model_input.text())
+
+    def on_proxy_fallback_model_changed(self):
+        self._save_proxy_field(
+            "antigravity_search_fallback_model",
+            self.proxy_fallback_model_input.text(),
+        )
+
+    def on_proxy_api_key_toggle_visibility(self):
+        showing = self.proxy_api_key_input.echoMode() == QLineEdit.EchoMode.Normal
+        if showing:
+            self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.proxy_api_key_toggle_btn.setText("Show")
+        else:
+            self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.proxy_api_key_toggle_btn.setText("Hide")
 
     def on_api_key_toggle_visibility(self):
         showing = self.api_key_input.echoMode() == QLineEdit.EchoMode.Normal

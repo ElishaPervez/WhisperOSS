@@ -1,9 +1,10 @@
 import logging
-from typing import Optional, Union, Tuple
+from typing import Optional, Union
 import io
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.groq_client import GroqClient
+from src.proxy_search_client import ProxySearchClient
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -83,11 +84,13 @@ class SearchWorker(QThread):
     def __init__(self,
                  groq_client: GroqClient,
                  audio_file: Union[str, io.BytesIO],
-                 refinement_model_id: str = "openai/gpt-oss-120b"):
+                 refinement_model_id: str = "openai/gpt-oss-120b",
+                 search_client: Optional[ProxySearchClient] = None):
         super().__init__()
         self.groq_client = groq_client
         self.audio_file = audio_file
         self.refinement_model_id = refinement_model_id
+        self.search_client = search_client
 
     def run(self) -> None:
         try:
@@ -110,8 +113,20 @@ class SearchWorker(QThread):
 
             logger.info(f"Refined query ({self.refinement_model_id}): '{query_text}' -> '{refined_query}'")
 
-            # Step 3: Search / Answer using Compound model
-            answer = self.groq_client.run_search(refined_query)
+            # Step 3: Search / Answer
+            # Prefer Antigravity proxy when enabled, but always keep Groq as fallback.
+            if self.search_client is not None:
+                try:
+                    answer = self.search_client.run_search(refined_query)
+                except Exception as proxy_exc:
+                    logger.warning(
+                        "Antigravity proxy search failed, falling back to Groq search: %s",
+                        proxy_exc,
+                    )
+                    answer = self.groq_client.run_search(refined_query)
+            else:
+                answer = self.groq_client.run_search(refined_query)
+
             self.finished.emit(answer)
 
         except Exception as e:
