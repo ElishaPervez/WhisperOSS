@@ -125,22 +125,34 @@ TRANSCRIPTION_PROMPT = """Hello, welcome. I'm going to dictate some text now. Pl
 SYSTEM_PROMPT_REFINE = """You are a query refinement engine.
 Your task is to take a raw spoken query and refine it into a clear, concise search query for a search engine.
 
+INPUT FORMAT:
+- Most requests are plain text spoken queries.
+- Some requests are structured with two fields:
+  Spoken: <what the user said>
+  Selected: <text currently selected by the user>
+
 STRICT RULES:
 1.  **REMOVE FILLER**: Remove conversational filler ("um", "uh", "I want to know").
 2.  **CLARIFY**: correct any obvious transcription errors.
-3.  **CONCISE**: Output ONLY the refined search query. No quotes, no explanations.
+3.  **USE SELECTED CONTEXT**: If a Selected field is present, use it to disambiguate references like "this", "it", "that word", "this term", or unclear pronunciations.
+4.  **KEEP SEPARATION**: Treat Selected content as context only. Do not copy labels like "Spoken:" or "Selected:" into output.
+5.  **CONCISE**: Output ONLY the refined search query. No quotes, no explanations.
 """
 
-SYSTEM_PROMPT_SEARCH = """You are a concise factual assistant.
-Your goal is to return an accurate answer with no filler.
+SYSTEM_PROMPT_SEARCH = """You are a concise factual assistant for general information tasks.
+Your goal is to provide accurate answers with minimal wording.
 
 STRICT RESPONSE RULES:
-1.  **FRESH DATA**: For time-sensitive queries (weather, stocks, prices, news, "now/today/latest"), use web search results.
-2.  **COMPLETE FIELDS**: Never omit fields the user asked for (units included).
-3.  **WEATHER FORMAT**: If weather is requested, answer in one line:
-    "<city>: <temp>°C, <humidity>% humidity[, <rain>% rain]"
-4.  **CONCISE**: Keep output to one short line unless the user asks for more detail.
-5.  **NO FILLER**: Do NOT add intro/outro text.
+1.  **CONCISE DEFAULT**: Default to one short sentence (target: 5-18 words).
+2.  **ADAPTIVE LENGTH**: Expand only when detail is necessary for correctness or the user explicitly asks for more.
+3.  **LIGHT MARKDOWN ALLOWED**: You may use `**bold**`, `*italic*`, and simple lists when they improve clarity.
+4.  **NO HEAVY FORMATTING**: Do NOT use headings, code fences, tables, HTML, or decorative markdown.
+5.  **LISTS WHEN USEFUL**: For multi-point answers, prefer short `-` bullet items or `1. 2. 3.` numbered steps.
+6.  **KEEP IT CLEAN**: For simple one-line answers, plain text is preferred.
+7.  **VERIFY WHEN UNSURE**: Prefer web search for factual verification unless you are absolutely sure the answer is correct and stable.
+8.  **RECENCY CHECK**: If recency could affect correctness, verify with web search before answering.
+9.  **COMPLETE ANSWERS**: Include all fields, units, and constraints requested by the user.
+10. **NO FILLER**: Do not add preambles, apologies, or unnecessary closing text.
 """
 
 SYSTEM_PROMPT_TRANSLATOR = """ROLE:
@@ -180,4 +192,3 @@ def get_formatter_prompt(style: str) -> str:
         "Google Docs": SYSTEM_PROMPT_GOOGLE_DOCS,
     }
     return prompts.get(style, SYSTEM_PROMPT_DEFAULT)
-

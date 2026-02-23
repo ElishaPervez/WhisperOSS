@@ -1,7 +1,17 @@
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QLinearGradient, QRadialGradient
+from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
+from PyQt6.QtCore import Qt, QTimer, QRect, QEasingCurve
+from PyQt6.QtGui import (
+    QPainter,
+    QColor,
+    QBrush,
+    QPen,
+    QLinearGradient,
+    QRadialGradient,
+    QTextDocument,
+)
+from typing import Optional
 import math
+import re
 
 
 def _normalize_animation_fps(value, default: int = 100) -> int:
@@ -518,24 +528,51 @@ class CompactAudioVisualizer(QWidget):
 
 # Keep AudioVisualizer for backward compatibility if needed as overlay
 class AudioVisualizer(QWidget):
-    """Floating audio visualizer overlay with compact bar design and fade animation"""
-    
+    """Floating audio visualizer overlay with compact bar design and fade animation."""
+
+    COMPACT_WIDTH = 120
+    COMPACT_HEIGHT = 36
+    CARD_MIN_WIDTH = 214
+    CARD_MAX_WIDTH = 760
+    CARD_MIN_HEIGHT = 74
+    CARD_MAX_HEIGHT = 260
+    ANSWER_AUTO_DISMISS_MS = 15_000
+    ANSWER_REVEAL_DELAY_FRAMES = 10
+    ANSWER_EXPAND_FRAMES = 40
+    ANSWER_COLLAPSE_FRAMES = 24
+    ANSWER_COMPLETION_HOLD_FRAMES = 42
+
     def __init__(self, animation_fps: int = 100):
         super().__init__()
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Tool |
-            Qt.WindowType.WindowTransparentForInput  # Click-through: allows clicking elements behind
-        )
+        self._click_through = True
+        self._apply_window_flags()
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.resize(120, 36)  # Compact size
-        
-        # Create compact visualizer as child
+        self.resize(self.COMPACT_WIDTH, self.COMPACT_HEIGHT)
+
         self._visualizer = CompactAudioVisualizer(self)
-        self._visualizer.setFixedSize(120, 36)
-        
-        # Fade animation setup
+        self._visualizer.setFixedSize(self.COMPACT_WIDTH, self.COMPACT_HEIGHT)
+
+        self._answer_visible = False
+        self._answer_text_pending = ""
+        self._answer_anchor_rect = QRect()
+        self._drag_origin = None
+
+        # Frame-driven transform animation so motion cadence follows configured FPS.
+        self._transition_timer = QTimer(self)
+        self._transition_timer.timeout.connect(self._animate_widget_geometry_step)
+        self._transition_start_rect = QRect()
+        self._transition_end_rect = QRect()
+        self._transition_frames = 0
+        self._transition_frame_index = 0
+        self._transition_easing = QEasingCurve(QEasingCurve.Type.Linear)
+        self._transition_has_opacity = False
+        self._transition_start_opacity = 1.0
+        self._transition_end_opacity = 1.0
+        self._transition_on_finished = None
+
+        self._build_answer_card()
+
+        # Fade animation setup for compact recording mode.
         self._opacity = 0.0
         self._fade_timer = QTimer(self)
         self._fade_timer.timeout.connect(self._animate_fade)
@@ -546,13 +583,355 @@ class AudioVisualizer(QWidget):
         self._hide_after_completion_timer = QTimer(self)
         self._hide_after_completion_timer.setSingleShot(True)
         self._hide_after_completion_timer.timeout.connect(self.hide)
+        self._auto_dismiss_timer = QTimer(self)
+        self._auto_dismiss_timer.setSingleShot(True)
+        self._auto_dismiss_timer.timeout.connect(self.dismiss_answer)
+        self._answer_reveal_timer = QTimer(self)
+        self._answer_reveal_timer.setSingleShot(True)
+        self._answer_reveal_timer.timeout.connect(self._begin_answer_reveal)
         self.set_animation_fps(self._animation_fps)
+        self._sync_child_geometry()
 
-    def set_animation_fps(self, fps: int):
-        self._animation_fps = _normalize_animation_fps(fps, self._animation_fps)
-        self._visualizer.set_animation_fps(self._animation_fps)
-        self._fade_timer.setInterval(_interval_from_fps(self._animation_fps))
-        
+    def _build_answer_card(self):
+        self._answer_card = QWidget(self)
+        self._answer_card.setObjectName("AnswerCard")
+        self._answer_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._answer_card.hide()
+
+        self._answer_label = QLabel(self._answer_card)
+        self._answer_label.setObjectName("AnswerBody")
+        self._answer_label.setWordWrap(True)
+        self._answer_label.setTextFormat(Qt.TextFormat.MarkdownText)
+        self._answer_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        self._seen_button = QPushButton("Seen", self._answer_card)
+        self._seen_button.setObjectName("SeenButton")
+        self._seen_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._seen_button.clicked.connect(self.dismiss_answer)
+
+        layout = QVBoxLayout(self._answer_card)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self._answer_label)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(self._seen_button)
+        layout.addLayout(row)
+
+        self._answer_card.setStyleSheet(
+            """
+            QWidget#AnswerCard {
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 rgba(10, 11, 14, 248),
+                    stop: 0.62 rgba(6, 7, 10, 246),
+                    stop: 1 rgba(3, 4, 6, 242)
+                );
+                border: none;
+                border-radius: 16px;
+            }
+            QLabel#AnswerBody {
+                color: rgba(248, 249, 251, 246);
+                font-size: 13px;
+                font-weight: 500;
+                line-height: 1.32;
+            }
+            QPushButton#SeenButton {
+                background: rgba(255, 255, 255, 11);
+                color: rgba(248, 250, 254, 242);
+                border: none;
+                border-radius: 11px;
+                padding: 4px 12px;
+                font-size: 12px;
+                font-weight: 600;
+                min-height: 23px;
+            }
+            QPushButton#SeenButton:hover {
+                background: rgba(255, 255, 255, 17);
+            }
+            QPushButton#SeenButton:pressed {
+                background: rgba(255, 255, 255, 25);
+            }
+            """
+        )
+
+    def _apply_window_flags(self):
+        flags = (
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        if self._click_through:
+            flags |= Qt.WindowType.WindowTransparentForInput
+        self.setWindowFlags(flags)
+
+    def _set_click_through(self, enabled: bool):
+        enabled = bool(enabled)
+        if self._click_through == enabled:
+            return
+        geometry = self.geometry()
+        was_visible = self.isVisible()
+        self._click_through = enabled
+        self._apply_window_flags()
+        if was_visible:
+            super().show()
+            self.setGeometry(geometry)
+            self.setWindowOpacity(self._opacity)
+        self._sync_child_geometry()
+
+    def _screen_geometry_for_rect(self, reference_rect: QRect) -> QRect:
+        app = self.window().windowHandle().screen() if self.window().windowHandle() else None
+        if app is not None:
+            return app.availableGeometry()
+        try:
+            from PyQt6.QtWidgets import QApplication
+
+            screen = QApplication.screenAt(reference_rect.center())
+            if screen is None:
+                screen = QApplication.primaryScreen()
+            if screen is not None:
+                return screen.availableGeometry()
+        except Exception:
+            pass
+        return QRect(0, 0, 1920, 1080)
+
+    def _sync_child_geometry(self):
+        bounds = self.rect()
+        self._visualizer.setGeometry(bounds)
+        self._answer_card.setGeometry(bounds)
+
+    def resizeEvent(self, event):
+        self._sync_child_geometry()
+        super().resizeEvent(event)
+
+    def _stop_answer_transition(self):
+        if self._transition_timer.isActive():
+            self._transition_timer.stop()
+        self._transition_on_finished = None
+
+    def _duration_for_frames(self, frames: int) -> int:
+        frames = max(1, int(frames))
+        return max(90, int(round((1000.0 * frames) / float(self._animation_fps))))
+
+    @staticmethod
+    def _strip_markdown_for_metrics(text: str) -> str:
+        raw = str(text or "")
+        raw = re.sub(r"`([^`]*)`", r"\1", raw)
+        raw = re.sub(r"\*\*([^*]+)\*\*", r"\1", raw)
+        raw = re.sub(r"__([^_]+)__", r"\1", raw)
+        raw = re.sub(r"\*([^*]+)\*", r"\1", raw)
+        raw = re.sub(r"_([^_]+)_", r"\1", raw)
+        raw = re.sub(r"^\s*[-*+]\s+", "", raw, flags=re.MULTILINE)
+        raw = re.sub(r"^\s*\d+\.\s+", "", raw, flags=re.MULTILINE)
+        return raw
+
+    @staticmethod
+    def _contains_markdown_markup(text: str) -> bool:
+        sample = str(text or "")
+        if re.search(r"(^|\n)\s*[-*+]\s+\S", sample):
+            return True
+        if re.search(r"(^|\n)\s*\d+\.\s+\S", sample):
+            return True
+        return any(token in sample for token in ("**", "__", "`", "~~"))
+
+    def _create_markdown_document(self, text: str) -> QTextDocument:
+        doc = QTextDocument()
+        doc.setDocumentMargin(0.0)
+        doc.setDefaultFont(self._answer_label.font())
+        doc.setMarkdown(str(text or ""))
+        return doc
+
+    def _measure_wrapped_text(self, text: str, text_width: int) -> tuple[float, int]:
+        width = max(1, int(text_width))
+        doc = self._create_markdown_document(text)
+        doc.setTextWidth(float(width))
+        measured_height = float(doc.size().height())
+        line_height = max(1.0, float(self._answer_label.fontMetrics().lineSpacing()))
+        estimated_lines = max(1, int(math.ceil(measured_height / line_height)))
+        return measured_height, estimated_lines
+
+    def _pick_text_width(self, text: str, max_text_width: int) -> int:
+        max_text_width = max(120, int(max_text_width))
+        min_text_width = min(max_text_width, max(156, int(max_text_width * 0.32)))
+        plain_text = self._strip_markdown_for_metrics(text)
+        natural_width = max(
+            1,
+            max(
+                self._answer_label.fontMetrics().horizontalAdvance(line)
+                for line in (plain_text.splitlines() or [""])
+            ),
+        )
+        has_markup = self._contains_markdown_markup(text) or ("\n" in text)
+
+        # Keep short answers as slim single-line cards.
+        if (not has_markup) and natural_width <= int(max_text_width * 0.78):
+            return int(max(min_text_width, min(max_text_width, natural_width + 10)))
+
+        best_width = max_text_width
+        best_score = None
+        step = 6 if max_text_width - min_text_width < 170 else 8
+
+        for width in range(min_text_width, max_text_width + 1, step):
+            text_height, line_count = self._measure_wrapped_text(text, width)
+            if line_count <= 0:
+                continue
+
+            fill_ratio = min(1.0, float(natural_width) / max(1.0, float(width)))
+
+            if line_count <= 2:
+                density_penalty = 0.0
+            else:
+                density_penalty = 0.95 + (line_count - 2) * 1.25
+
+            height_penalty = text_height / 680.0
+            width_penalty = (float(width) / float(max_text_width)) * 0.08
+
+            score = density_penalty + ((1.0 - fill_ratio) * 0.64) + height_penalty + width_penalty
+
+            if best_score is None or score < best_score:
+                best_score = score
+                best_width = width
+
+        return int(best_width)
+
+    def _compact_rect_for_reference(self, reference_rect: QRect) -> QRect:
+        screen_geo = self._screen_geometry_for_rect(reference_rect)
+        center_x = reference_rect.center().x()
+        bottom_y = reference_rect.bottom()
+
+        width = self.COMPACT_WIDTH
+        height = self.COMPACT_HEIGHT
+        margin = 8
+
+        x = center_x - (width // 2)
+        y = bottom_y - height + 1
+
+        min_x = screen_geo.x() + margin
+        max_x = screen_geo.x() + screen_geo.width() - width - margin
+        min_y = screen_geo.y() + margin
+        max_y = screen_geo.y() + screen_geo.height() - height - margin
+
+        if max_x >= min_x:
+            x = max(min_x, min(x, max_x))
+        if max_y >= min_y:
+            y = max(min_y, min(y, max_y))
+
+        return QRect(int(x), int(y), width, height)
+
+    def _answer_rect_for_reference(self, reference_rect: QRect, answer: str) -> QRect:
+        screen_geo = self._screen_geometry_for_rect(reference_rect)
+        max_width = max(self.CARD_MIN_WIDTH, min(self.CARD_MAX_WIDTH, int(screen_geo.width() * 0.68)))
+        max_width = max(max_width, self.CARD_MIN_WIDTH)
+
+        layout = self._answer_card.layout()
+        margins = layout.contentsMargins()
+        horizontal_padding = margins.left() + margins.right()
+        vertical_padding = margins.top() + margins.bottom()
+        layout_spacing = layout.spacing()
+
+        max_text_width = max(120, max_width - horizontal_padding)
+        text_width = self._pick_text_width(answer, max_text_width)
+        text_height, _ = self._measure_wrapped_text(answer, text_width)
+
+        button_width = self._seen_button.sizeHint().width()
+        button_height = self._seen_button.sizeHint().height()
+        target_width = max(text_width + horizontal_padding, button_width + horizontal_padding + 4)
+        target_width = max(self.CARD_MIN_WIDTH, min(max_width, int(target_width)))
+
+        max_height = max(self.CARD_MIN_HEIGHT, min(self.CARD_MAX_HEIGHT, int(screen_geo.height() * 0.46)))
+        target_height = int(math.ceil(text_height)) + vertical_padding + max(24, button_height) + layout_spacing + 6
+        target_height = max(self.CARD_MIN_HEIGHT, min(max_height, target_height))
+
+        center_x = reference_rect.center().x()
+        bottom_y = reference_rect.bottom()
+        margin = 12
+
+        x = center_x - (target_width // 2)
+        y = bottom_y - target_height + 1
+
+        min_x = screen_geo.x() + margin
+        max_x = screen_geo.x() + screen_geo.width() - target_width - margin
+        min_y = screen_geo.y() + margin
+        max_y = screen_geo.y() + screen_geo.height() - target_height - margin
+
+        if max_x >= min_x:
+            x = max(min_x, min(x, max_x))
+        if max_y >= min_y:
+            y = max(min_y, min(y, max_y))
+
+        return QRect(int(x), int(y), int(target_width), int(target_height))
+
+    def _animate_widget_geometry(
+        self,
+        start_rect: QRect,
+        end_rect: QRect,
+        frames: int,
+        easing: QEasingCurve.Type,
+        fade_end: Optional[float] = None,
+        on_finished=None,
+    ):
+        self._stop_answer_transition()
+        self._transition_start_rect = QRect(start_rect)
+        self._transition_end_rect = QRect(end_rect)
+        self._transition_frames = max(1, int(frames))
+        self._transition_frame_index = 0
+        self._transition_easing = QEasingCurve(easing)
+        self._transition_has_opacity = fade_end is not None
+        self._transition_start_opacity = float(self.windowOpacity())
+        self._transition_end_opacity = float(self._transition_start_opacity if fade_end is None else fade_end)
+        self._transition_on_finished = on_finished
+
+        self.setGeometry(self._transition_start_rect)
+        if self._transition_has_opacity:
+            self.setWindowOpacity(self._transition_start_opacity)
+            self._opacity = self._transition_start_opacity
+
+        if not self._transition_timer.isActive():
+            self._transition_timer.start(_interval_from_fps(self._animation_fps))
+
+    def _animate_widget_geometry_step(self):
+        if self._transition_frames <= 0:
+            self._stop_answer_transition()
+            return
+
+        self._transition_frame_index += 1
+        progress = min(1.0, self._transition_frame_index / float(self._transition_frames))
+        eased = float(self._transition_easing.valueForProgress(progress))
+
+        sx = self._transition_start_rect.x()
+        sy = self._transition_start_rect.y()
+        sw = self._transition_start_rect.width()
+        sh = self._transition_start_rect.height()
+        ex = self._transition_end_rect.x()
+        ey = self._transition_end_rect.y()
+        ew = self._transition_end_rect.width()
+        eh = self._transition_end_rect.height()
+
+        nx = int(round(sx + (ex - sx) * eased))
+        ny = int(round(sy + (ey - sy) * eased))
+        nw = int(round(sw + (ew - sw) * eased))
+        nh = int(round(sh + (eh - sh) * eased))
+        self.setGeometry(nx, ny, nw, nh)
+
+        if self._transition_has_opacity:
+            opacity = self._transition_start_opacity + (
+                (self._transition_end_opacity - self._transition_start_opacity) * eased
+            )
+            self._opacity = float(opacity)
+            self.setWindowOpacity(self._opacity)
+
+        if progress >= 1.0:
+            self._transition_timer.stop()
+            self.setGeometry(self._transition_end_rect)
+            if self._transition_has_opacity:
+                self._opacity = float(self._transition_end_opacity)
+                self.setWindowOpacity(self._opacity)
+            callback = self._transition_on_finished
+            self._transition_on_finished = None
+            if callback is not None:
+                callback()
+
     def _animate_fade(self):
         """Smooth fade animation step."""
         diff = self._fade_target - self._opacity
@@ -567,10 +946,17 @@ class AudioVisualizer(QWidget):
             lerp = 0.17 if diff > 0 else 0.1
             self._opacity += diff * lerp
         self.setWindowOpacity(self._opacity)
-        
+
+    def set_animation_fps(self, fps: int):
+        self._animation_fps = _normalize_animation_fps(fps, self._animation_fps)
+        self._visualizer.set_animation_fps(self._animation_fps)
+        self._fade_timer.setInterval(_interval_from_fps(self._animation_fps))
+        self._transition_timer.setInterval(_interval_from_fps(self._animation_fps))
+
     def show(self):
         """Show with fade in animation."""
         self._hide_after_completion_timer.stop()
+        self._answer_reveal_timer.stop()
         if not self._is_showing:
             self._is_showing = True
             self._opacity = 0.0
@@ -579,27 +965,170 @@ class AudioVisualizer(QWidget):
         self._fade_target = 1.0
         if not self._fade_timer.isActive():
             self._fade_timer.start(_interval_from_fps(self._animation_fps))
-    
+
     def hide(self):
         """Hide with fade out animation."""
         self._hide_after_completion_timer.stop()
+        self._auto_dismiss_timer.stop()
+        if self._answer_reveal_timer.isActive():
+            self._answer_reveal_timer.stop()
+            self._answer_text_pending = ""
+        if self._answer_visible:
+            self.dismiss_answer()
+            return
         self._is_showing = False
         self._fade_target = 0.0
         if not self._fade_timer.isActive():
             self._fade_timer.start(_interval_from_fps(self._animation_fps))
 
+    def _reset_answer_state_immediately(self):
+        self._auto_dismiss_timer.stop()
+        self._answer_reveal_timer.stop()
+        self._answer_text_pending = ""
+        if (
+            not self._answer_visible
+            and not self._answer_card.isVisible()
+            and not self._transition_timer.isActive()
+        ):
+            return
+        self._stop_answer_transition()
+        self._answer_visible = False
+        self._answer_card.hide()
+        self._answer_label.clear()
+        self._visualizer.show()
+        self._visualizer.set_mode("idle")
+        compact_rect = self._compact_rect_for_reference(self.geometry())
+        self.setGeometry(compact_rect)
+        self._sync_child_geometry()
+        self._set_click_through(True)
+        self._opacity = 1.0 if self.isVisible() else 0.0
+        self.setWindowOpacity(self._opacity)
+
+    def show_answer(self, answer: str):
+        text = (answer or "").strip() or "No answer available."
+        if len(text) > 900:
+            text = text[:897].rstrip() + "..."
+
+        self._hide_after_completion_timer.stop()
+        self._auto_dismiss_timer.stop()
+        self._answer_reveal_timer.stop()
+        self._fade_timer.stop()
+        self._stop_answer_transition()
+        self._reset_answer_state_immediately()
+        self._visualizer.set_mode("success")
+        self._answer_text_pending = text
+
+        if not self.isVisible():
+            self._is_showing = True
+            self._opacity = 1.0
+            self.setWindowOpacity(1.0)
+            super().show()
+        else:
+            self._is_showing = True
+            self._opacity = 1.0
+            self.setWindowOpacity(1.0)
+
+        start_rect = self.geometry()
+        if start_rect.width() <= 0 or start_rect.height() <= 0:
+            start_rect = QRect(self.x(), self.y(), self.COMPACT_WIDTH, self.COMPACT_HEIGHT)
+            self.setGeometry(start_rect)
+        self._answer_anchor_rect = QRect(start_rect)
+        self._answer_visible = False
+        self._answer_card.hide()
+        self._visualizer.show()
+        self._set_click_through(True)
+
+        reveal_delay_ms = self._duration_for_frames(self.ANSWER_REVEAL_DELAY_FRAMES)
+        self._answer_reveal_timer.start(reveal_delay_ms)
+
+    def _begin_answer_reveal(self):
+        text = (self._answer_text_pending or "").strip()
+        if not text:
+            return
+
+        start_rect = QRect(self._answer_anchor_rect)
+        if start_rect.width() <= 0 or start_rect.height() <= 0:
+            start_rect = QRect(self.geometry())
+
+        self._set_click_through(False)
+        self._answer_visible = True
+        self._answer_text_pending = ""
+        self._answer_label.setText(text)
+        self._answer_card.show()
+        self._answer_card.raise_()
+        self._visualizer.hide()
+
+        target_rect = self._answer_rect_for_reference(start_rect, text)
+        self._animate_widget_geometry(
+            start_rect=start_rect,
+            end_rect=target_rect,
+            frames=self.ANSWER_EXPAND_FRAMES,
+            easing=QEasingCurve.Type.OutCubic,
+        )
+        self._auto_dismiss_timer.start(self.ANSWER_AUTO_DISMISS_MS)
+
+    def _finish_answer_collapse(self):
+        self._stop_answer_transition()
+        self._answer_visible = False
+        self._answer_card.hide()
+        self._answer_label.clear()
+        self._answer_text_pending = ""
+        compact_rect = self._compact_rect_for_reference(self.geometry())
+        self.setGeometry(compact_rect)
+        self._visualizer.show()
+        self._visualizer.set_mode("success")
+        self._is_showing = True
+        self._opacity = 1.0
+        self.setWindowOpacity(1.0)
+        self._set_click_through(True)
+        self._hide_after_completion_timer.stop()
+        self.play_completion_and_hide(delay_ms=self._duration_for_frames(self.ANSWER_COMPLETION_HOLD_FRAMES))
+        self._sync_child_geometry()
+
+    def dismiss_answer(self):
+        if not self._answer_visible:
+            if self._answer_reveal_timer.isActive():
+                self._answer_reveal_timer.stop()
+                self._answer_text_pending = ""
+            self.hide()
+            return
+
+        self._auto_dismiss_timer.stop()
+        self._answer_reveal_timer.stop()
+        self._hide_after_completion_timer.stop()
+        self._fade_timer.stop()
+        self._is_showing = True
+        self._fade_target = 1.0
+
+        start_rect = self.geometry()
+        end_rect = self._compact_rect_for_reference(start_rect)
+        self._animate_widget_geometry(
+            start_rect=start_rect,
+            end_rect=end_rect,
+            frames=self.ANSWER_COLLAPSE_FRAMES,
+            easing=QEasingCurve.Type.InOutCubic,
+            on_finished=self._finish_answer_collapse,
+        )
+
     def update_level(self, level):
+        if self._answer_visible:
+            return
         self._visualizer.update_level(level)
 
     def set_listening_mode(self):
         self._hide_after_completion_timer.stop()
+        self._reset_answer_state_immediately()
         self._visualizer.set_mode("listening")
 
     def set_processing_mode(self):
         self._hide_after_completion_timer.stop()
+        self._reset_answer_state_immediately()
         self._visualizer.set_mode("processing")
 
     def play_completion_and_hide(self, delay_ms: int = 1125):
+        self._auto_dismiss_timer.stop()
+        self._answer_reveal_timer.stop()
+        self._stop_answer_transition()
         self._visualizer.set_mode("success")
         self._hide_after_completion_timer.start(max(120, int(delay_ms)))
 
@@ -607,9 +1136,14 @@ class AudioVisualizer(QWidget):
         self.hide()
 
     def mousePressEvent(self, event):
-        self.oldPos = event.globalPosition().toPoint()
+        self._drag_origin = event.globalPosition().toPoint()
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        delta = event.globalPosition().toPoint() - self.oldPos
+        if self._drag_origin is None:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.globalPosition().toPoint() - self._drag_origin
         self.move(self.x() + delta.x(), self.y() + delta.y())
-        self.oldPos = event.globalPosition().toPoint()
+        self._drag_origin = event.globalPosition().toPoint()
+        super().mouseMoveEvent(event)

@@ -197,3 +197,175 @@ def test_run_search_retries_if_weather_fields_are_missing():
     result = client.run_search("weather in karachi now in celsius and humidity")
     assert result == "Karachi: 25°C, 57% humidity"
     assert len(calls) == 2
+
+
+def test_run_search_builds_multimodal_payload_when_image_is_provided():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    calls = []
+
+    def fake_json_request(method, path, payload):
+        calls.append(payload)
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {"choices": [{"message": {"content": "Looks like a settings icon."}}]},
+            "",
+        )
+
+    client._json_request = fake_json_request
+    result = client.run_search("what icon is this", image_bytes=b"\x89PNG\r\n\x1a\nfake")
+    assert result == "Looks like a settings icon."
+    content = calls[0]["messages"][1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_run_search_auto_continues_when_finish_reason_is_length():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    calls = []
+
+    def fake_json_request(method, path, payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return (
+                200,
+                {"X-Mapped-Model": "gemini-3-flash-online"},
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "The character appears to be Daniel from the series",
+                            },
+                            "finish_reason": "length",
+                        }
+                    ]
+                },
+                "",
+            )
+
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": " based on the hairstyle and uniform details.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+            "",
+        )
+
+    client._json_request = fake_json_request
+    result = client.run_search("who is this character")
+    assert result == (
+        "The character appears to be Daniel from the series"
+        " based on the hairstyle and uniform details."
+    )
+    assert len(calls) == 2
+    assert calls[1]["messages"][2]["role"] == "assistant"
+    assert "Continue exactly from where you stopped" in calls[1]["messages"][3]["content"]
+
+
+def test_strip_proxy_grounding_removes_leaked_search_trace_suffix():
+    raw = (
+        "ZOTAC and PNY both target similar price tiers, but PNY is quieter."
+        "旁search{queries:[<tr146>ZOTAC twin edge vs PNY RTX build quality]}"
+    )
+
+    cleaned = ProxySearchClient._strip_proxy_grounding(raw)
+
+    assert cleaned == "ZOTAC and PNY both target similar price tiers, but PNY is quieter."
+
+
+def test_run_search_strips_leaked_search_trace_from_answer():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+
+    def fake_json_request(method, path, payload):
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "PNY generally has lower noise levels than ZOTAC."
+                                " search{queries:[zotac vs pny noise levels]}"
+                            )
+                        }
+                    }
+                ]
+            },
+            "",
+        )
+
+    client._json_request = fake_json_request
+
+    result = client.run_search("zotac twin edge vs pny noise")
+    assert result == "PNY generally has lower noise levels than ZOTAC."
+
+
+def test_run_search_tries_next_attempt_when_continuation_remains_truncated():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    calls = []
+
+    def fake_json_request(method, path, payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return (
+                200,
+                {"X-Mapped-Model": "gemini-3-flash-online"},
+                {
+                    "choices": [
+                        {
+                            "message": {"content": "PNY is usually quieter than ZOTAC"},
+                            "finish_reason": "length",
+                        }
+                    ]
+                },
+                "",
+            )
+        if len(calls) == 2:
+            # Continuation request returns no useful content and remains truncated.
+            return (
+                200,
+                {"X-Mapped-Model": "gemini-3-flash-online"},
+                {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+                "",
+            )
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash"},
+            {"choices": [{"message": {"content": "PNY is usually quieter than ZOTAC in similar SKUs."}}]},
+            "",
+        )
+
+    client._json_request = fake_json_request
+
+    result = client.run_search("zotac twin edge vs pny rtx noise")
+    assert result == "PNY is usually quieter than ZOTAC in similar SKUs."
+    assert len(calls) == 3
+    assert calls[2]["model"] == "gemini-3-flash"
+    assert "tools" in calls[2]
