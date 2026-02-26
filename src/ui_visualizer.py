@@ -417,11 +417,14 @@ class AudioVisualizer(QWidget):
     ANSWER_EXPAND_FRAMES = 40
     ANSWER_COLLAPSE_FRAMES = 24
     ANSWER_COMPLETION_HOLD_FRAMES = 150
+    STREAM_DEFAULT_REVEAL_WPS = 8
+    STREAM_MIN_REVEAL_WPS = 1
+    STREAM_MAX_REVEAL_WPS = 25
     STREAM_WORD_FADE_MS = 320.0
     STREAM_WORD_OVERLAP_RATIO = 0.30
     STREAM_MAX_LAG_MS = 3000.0
     STREAM_COMPLETION_TARGET_MS = 3000.0
-    STREAM_MIN_WORD_STEP_MS = 42.0
+    STREAM_MIN_WORD_STEP_MS = 4.0
     STREAM_TEXT_FADE_MIN_OPACITY = 0.70
 
     def __init__(self, animation_fps: int = 100):
@@ -455,6 +458,9 @@ class AudioVisualizer(QWidget):
         self._streaming_anchor_center_x = 0
         self._streaming_anchor_bottom_y = 0
         self._streaming_anchor_valid = False
+        self._stream_realtime_enabled = True
+        self._stream_reveal_wps = self._normalize_stream_reveal_wps(self.STREAM_DEFAULT_REVEAL_WPS)
+        self._stream_catch_up_enabled = True
 
         # Frame-driven transform animation so motion cadence follows configured FPS.
         self._transition_timer = QTimer(self)
@@ -782,20 +788,46 @@ class AudioVisualizer(QWidget):
             self._streaming_reveal_carry = 0.0
         self._streaming_visible_segments = min(self._streaming_visible_segments, total)
 
-    def _streaming_word_step_ms(self, backlog_segments: int) -> float:
-        base_step = max(
-            self.STREAM_MIN_WORD_STEP_MS,
-            self.STREAM_WORD_FADE_MS * max(0.05, (1.0 - self.STREAM_WORD_OVERLAP_RATIO)),
-        )
-        step_ms = base_step
+    @classmethod
+    def _normalize_stream_reveal_wps(cls, value) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = int(cls.STREAM_DEFAULT_REVEAL_WPS)
+        return max(cls.STREAM_MIN_REVEAL_WPS, min(cls.STREAM_MAX_REVEAL_WPS, parsed))
 
-        if backlog_segments > 0 and self._streaming_answer_active:
-            lag_ms = float(backlog_segments) * base_step
+    def set_stream_realtime_enabled(self, enabled: bool):
+        self._stream_realtime_enabled = bool(enabled)
+        if self._stream_realtime_enabled and self._streaming_pending_text is not None:
+            # Apply pending updates immediately so UI mirrors incoming stream cadence.
+            self._tick_streaming_answer_frame()
+
+    def is_stream_realtime_enabled(self) -> bool:
+        return bool(self._stream_realtime_enabled)
+
+    def set_stream_reveal_wps(self, wps: int):
+        self._stream_reveal_wps = self._normalize_stream_reveal_wps(wps)
+
+    def stream_reveal_wps(self) -> int:
+        return int(self._stream_reveal_wps)
+
+    def set_stream_catch_up_enabled(self, enabled: bool):
+        self._stream_catch_up_enabled = bool(enabled)
+
+    def is_stream_catch_up_enabled(self) -> bool:
+        return bool(self._stream_catch_up_enabled)
+
+    def _streaming_word_step_ms(self, backlog_segments: int) -> float:
+        configured_step = 1000.0 / float(max(1, self._stream_reveal_wps))
+        step_ms = max(self.STREAM_MIN_WORD_STEP_MS, configured_step)
+
+        if self._stream_catch_up_enabled and backlog_segments > 0 and self._streaming_answer_active:
+            lag_ms = float(backlog_segments) * step_ms
             if lag_ms > self.STREAM_MAX_LAG_MS:
-                catch_up_step = base_step * (self.STREAM_MAX_LAG_MS / lag_ms)
+                catch_up_step = step_ms * (self.STREAM_MAX_LAG_MS / lag_ms)
                 step_ms = min(step_ms, max(self.STREAM_MIN_WORD_STEP_MS, catch_up_step))
 
-        if backlog_segments > 0 and (not self._streaming_answer_active):
+        if self._stream_catch_up_enabled and backlog_segments > 0 and (not self._streaming_answer_active):
             completion_step = self.STREAM_COMPLETION_TARGET_MS / float(backlog_segments)
             step_ms = min(step_ms, max(self.STREAM_MIN_WORD_STEP_MS, completion_step))
 
@@ -827,13 +859,19 @@ class AudioVisualizer(QWidget):
         reveal_count = 0
 
         if backlog_segments > 0:
-            step_ms = self._streaming_word_step_ms(backlog_segments)
-            reveal_progress = self._streaming_reveal_carry + (elapsed_ms / max(1.0, step_ms))
-            reveal_count = int(reveal_progress)
-            self._streaming_reveal_carry = reveal_progress - reveal_count
-            if reveal_count > 0:
-                visible_segments = min(total_segments, visible_segments + reveal_count)
+            if self._stream_realtime_enabled:
+                reveal_count = backlog_segments
+                self._streaming_reveal_carry = 0.0
+                visible_segments = total_segments
                 self._streaming_visible_segments = visible_segments
+            else:
+                step_ms = self._streaming_word_step_ms(backlog_segments)
+                reveal_progress = self._streaming_reveal_carry + (elapsed_ms / max(1.0, step_ms))
+                reveal_count = int(reveal_progress)
+                self._streaming_reveal_carry = reveal_progress - reveal_count
+                if reveal_count > 0:
+                    visible_segments = min(total_segments, visible_segments + reveal_count)
+                    self._streaming_visible_segments = visible_segments
         else:
             self._streaming_reveal_carry = 0.0
             self._streaming_visible_segments = visible_segments
@@ -1100,6 +1138,12 @@ class AudioVisualizer(QWidget):
         max_text_width = max(120, max_width - horizontal_padding - surface_horizontal)
         text_width = self._pick_text_width(answer, max_text_width)
         self._answer_label.setText(str(answer or ""))
+        # Reset prior geometry constraints before measurement. Otherwise a
+        # previous tall answer can poison `heightForWidth` and keep the next
+        # card artificially tall with large empty bottom space.
+        self._answer_label.setMinimumHeight(0)
+        self._answer_label.setMaximumHeight(16777215)
+        self._answer_label.setFixedWidth(max(1, text_width))
         label_height = self._measure_rendered_label_height(answer, text_width)
 
         button_width = self._seen_button.sizeHint().width()
@@ -1379,6 +1423,8 @@ class AudioVisualizer(QWidget):
         self._streaming_pending_text = rendered
         if not self._streaming_resize_timer.isActive():
             self._streaming_resize_timer.start()
+        if self._stream_realtime_enabled:
+            self._tick_streaming_answer_frame()
 
     def complete_streaming_answer(self, final_text: str = "", reason: str = ""):
         if self._streaming_answer_dismissed:

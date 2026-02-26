@@ -35,6 +35,14 @@ DEFAULT_CONFIG = {
     "input_device_index": None, # None means default
     "appearance_mode": "auto",  # auto | dark | light
     "animation_fps": 100,
+    # Streaming answer reveal behavior in the floating visualizer.
+    # - stream_realtime_enabled=True: render each arrived update immediately.
+    # - stream_reveal_wps: paced reveal speed used when realtime is disabled.
+    # - stream_catch_up_enabled=True: dynamically accelerate paced mode when
+    #   backlog grows so the UI catches up faster.
+    "stream_realtime_enabled": True,
+    "stream_reveal_wps": 8,
+    "stream_catch_up_enabled": True,
     "use_formatter": False,
     "translation_enabled": False,
     "target_language": "English"

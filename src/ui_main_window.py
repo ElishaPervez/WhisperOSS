@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QScrollArea,
     QGraphicsOpacityEffect,
+    QSlider,
 )
 
 
@@ -240,6 +241,9 @@ class MainWindow(QWidget):
     # Signals to Main Controller
     record_toggled = pyqtSignal(bool)  # True=Start, False=Stop
     config_changed = pyqtSignal(str, object)  # key, value
+    STREAM_REVEAL_MIN_WPS = 1
+    STREAM_REVEAL_MAX_WPS = 25
+    STREAM_REVEAL_DEFAULT_WPS = 8
 
     def __init__(self, config_manager):
         super().__init__()
@@ -304,6 +308,13 @@ class MainWindow(QWidget):
     def _normalize_proxy_thinking_level(self, value):
         normalized = str(value or "high").strip().lower()
         return normalized if normalized in {"high", "medium", "low", "none"} else "high"
+
+    def _normalize_stream_reveal_wps(self, value):
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = int(self.STREAM_REVEAL_DEFAULT_WPS)
+        return max(self.STREAM_REVEAL_MIN_WPS, min(self.STREAM_REVEAL_MAX_WPS, parsed))
 
     def _resolve_dark_theme(self):
         if self._appearance_mode == "dark":
@@ -1147,6 +1158,53 @@ class MainWindow(QWidget):
         proxy_row.addWidget(self.proxy_search_toggle)
         advanced_layout.addLayout(proxy_row)
 
+        stream_realtime_row = QHBoxLayout()
+        self.stream_realtime_label = QLabel("Real-time Streaming")
+        self.stream_realtime_toggle = AnimatedToggle()
+        self.stream_realtime_toggle.setChecked(
+            bool(self.config.get("stream_realtime_enabled", True))
+        )
+        self.stream_realtime_toggle.stateChanged.connect(self.on_stream_realtime_toggle_changed)
+        stream_realtime_row.addWidget(self.stream_realtime_label)
+        stream_realtime_row.addStretch()
+        stream_realtime_row.addWidget(self.stream_realtime_toggle)
+        advanced_layout.addLayout(stream_realtime_row)
+
+        self.stream_reveal_speed_label = QLabel("Reveal Speed (words/sec)")
+        advanced_layout.addWidget(self.stream_reveal_speed_label)
+        stream_speed_row = QHBoxLayout()
+        stream_speed_row.setSpacing(10)
+        self.stream_reveal_speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.stream_reveal_speed_slider.setRange(
+            self.STREAM_REVEAL_MIN_WPS, self.STREAM_REVEAL_MAX_WPS
+        )
+        self.stream_reveal_speed_slider.setSingleStep(1)
+        self.stream_reveal_speed_slider.setPageStep(2)
+        self.stream_reveal_speed_slider.setValue(
+            self._normalize_stream_reveal_wps(self.config.get("stream_reveal_wps", 8))
+        )
+        self.stream_reveal_speed_slider.valueChanged.connect(self.on_stream_reveal_wps_changed)
+        stream_speed_row.addWidget(self.stream_reveal_speed_slider, 1)
+        self.stream_reveal_speed_value = QLabel("")
+        self.stream_reveal_speed_value.setObjectName("MutedText")
+        self.stream_reveal_speed_value.setMinimumWidth(48)
+        stream_speed_row.addWidget(self.stream_reveal_speed_value)
+        advanced_layout.addLayout(stream_speed_row)
+
+        stream_catchup_row = QHBoxLayout()
+        self.stream_catch_up_label = QLabel("Smart Catch-up")
+        self.stream_catch_up_toggle = AnimatedToggle()
+        self.stream_catch_up_toggle.setChecked(
+            bool(self.config.get("stream_catch_up_enabled", True))
+        )
+        self.stream_catch_up_toggle.stateChanged.connect(
+            self.on_stream_catch_up_toggle_changed
+        )
+        stream_catchup_row.addWidget(self.stream_catch_up_label)
+        stream_catchup_row.addStretch()
+        stream_catchup_row.addWidget(self.stream_catch_up_toggle)
+        advanced_layout.addLayout(stream_catchup_row)
+
         # Collapsible instructions panel with animation + internal scrolling.
         self.proxy_setup_container = QFrame()
         self.proxy_setup_container.setObjectName("ProxyHelp")
@@ -1395,6 +1453,12 @@ class MainWindow(QWidget):
         self.config.set("target_language", self.language_input.currentText().strip() or "English")
         self.config.set("appearance_mode", self._appearance_mode)
         self.config.set("animation_fps", self._animation_fps)
+        self.config.set("stream_realtime_enabled", self.stream_realtime_toggle.isChecked())
+        self.config.set(
+            "stream_reveal_wps",
+            self._normalize_stream_reveal_wps(self.stream_reveal_speed_slider.value()),
+        )
+        self.config.set("stream_catch_up_enabled", self.stream_catch_up_toggle.isChecked())
 
         self.config.set("use_antigravity_proxy_search", self.proxy_search_toggle.isChecked())
         self.config.set("antigravity_proxy_url", self.proxy_url_input.text().strip())
@@ -1417,6 +1481,18 @@ class MainWindow(QWidget):
             self.config_changed.emit("input_device_index", device_id)
 
         self.config_changed.emit("animation_fps", self._animation_fps)
+        self.config_changed.emit(
+            "stream_realtime_enabled",
+            self.stream_realtime_toggle.isChecked(),
+        )
+        self.config_changed.emit(
+            "stream_reveal_wps",
+            self._normalize_stream_reveal_wps(self.stream_reveal_speed_slider.value()),
+        )
+        self.config_changed.emit(
+            "stream_catch_up_enabled",
+            self.stream_catch_up_toggle.isChecked(),
+        )
 
         proxy_enabled = self.proxy_search_toggle.isChecked()
         self.config_changed.emit("use_antigravity_proxy_search", proxy_enabled)
@@ -1488,6 +1564,17 @@ class MainWindow(QWidget):
                 self._proxy_help_target_height() if enabled else 0
             )
 
+    def _update_stream_reveal_value_label(self):
+        wps = int(self.stream_reveal_speed_slider.value())
+        self.stream_reveal_speed_value.setText(f"{wps} wps")
+
+    def _set_stream_reveal_controls_enabled(self, enabled: bool):
+        self.stream_reveal_speed_label.setEnabled(bool(enabled))
+        self.stream_reveal_speed_slider.setEnabled(bool(enabled))
+        self.stream_reveal_speed_value.setEnabled(True)
+        self.stream_catch_up_label.setEnabled(bool(enabled))
+        self.stream_catch_up_toggle.setEnabled(bool(enabled))
+
     def _init_ui_state(self):
         """Initialize UI state based on config."""
         self._appearance_mode = self._normalize_appearance_mode(self.config.get("appearance_mode", "auto"))
@@ -1522,6 +1609,22 @@ class MainWindow(QWidget):
         self.proxy_search_toggle.blockSignals(True)
         self.proxy_search_toggle.setChecked(proxy_enabled)
         self.proxy_search_toggle.blockSignals(False)
+        realtime_enabled = bool(self.config.get("stream_realtime_enabled", True))
+        self.stream_realtime_toggle.blockSignals(True)
+        self.stream_realtime_toggle.setChecked(realtime_enabled)
+        self.stream_realtime_toggle.blockSignals(False)
+        stream_wps = self._normalize_stream_reveal_wps(
+            self.config.get("stream_reveal_wps", self.STREAM_REVEAL_DEFAULT_WPS)
+        )
+        self.stream_reveal_speed_slider.blockSignals(True)
+        self.stream_reveal_speed_slider.setValue(stream_wps)
+        self.stream_reveal_speed_slider.blockSignals(False)
+        stream_catch_up_enabled = bool(self.config.get("stream_catch_up_enabled", True))
+        self.stream_catch_up_toggle.blockSignals(True)
+        self.stream_catch_up_toggle.setChecked(stream_catch_up_enabled)
+        self.stream_catch_up_toggle.blockSignals(False)
+        self._update_stream_reveal_value_label()
+        self._set_stream_reveal_controls_enabled(not realtime_enabled)
         self.proxy_url_input.setText(
             self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045")
         )
@@ -1758,6 +1861,30 @@ class MainWindow(QWidget):
         self.config.set("animation_fps", fps)
         self.config.save()
         self.config_changed.emit("animation_fps", fps)
+
+    def on_stream_realtime_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("stream_realtime_enabled", enabled)
+        self.config.save()
+        self._set_stream_reveal_controls_enabled(not enabled)
+        self.config_changed.emit("stream_realtime_enabled", enabled)
+
+    def on_stream_reveal_wps_changed(self, value):
+        normalized = self._normalize_stream_reveal_wps(value)
+        if normalized != int(value):
+            self.stream_reveal_speed_slider.blockSignals(True)
+            self.stream_reveal_speed_slider.setValue(normalized)
+            self.stream_reveal_speed_slider.blockSignals(False)
+        self._update_stream_reveal_value_label()
+        self.config.set("stream_reveal_wps", normalized)
+        self.config.save()
+        self.config_changed.emit("stream_reveal_wps", normalized)
+
+    def on_stream_catch_up_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("stream_catch_up_enabled", enabled)
+        self.config.save()
+        self.config_changed.emit("stream_catch_up_enabled", enabled)
 
     def on_proxy_search_toggle_changed(self, state):
         enabled = state == int(Qt.CheckState.Checked.value)

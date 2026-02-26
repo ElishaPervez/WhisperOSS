@@ -129,6 +129,15 @@ class WhisperAppController(QObject):
         # UI
         self.window = MainWindow(self.config)
         self.visualizer = AudioVisualizer(animation_fps=self.config.get("animation_fps", 100))
+        self.visualizer.set_stream_realtime_enabled(
+            bool(self.config.get("stream_realtime_enabled", True))
+        )
+        self.visualizer.set_stream_reveal_wps(
+            self.config.get("stream_reveal_wps", 8)
+        )
+        self.visualizer.set_stream_catch_up_enabled(
+            bool(self.config.get("stream_catch_up_enabled", True))
+        )
 
         # System Tray
         self.setup_system_tray()
@@ -280,6 +289,25 @@ class WhisperAppController(QObject):
             self.recorder.update_device(value)
         elif key == "animation_fps":
             self.visualizer.set_animation_fps(value)
+        elif key == "stream_realtime_enabled":
+            enabled = bool(value)
+            self.config.set("stream_realtime_enabled", enabled)
+            self.config.save()
+            self.visualizer.set_stream_realtime_enabled(enabled)
+        elif key == "stream_reveal_wps":
+            try:
+                wps = int(value)
+            except (TypeError, ValueError):
+                wps = 8
+            wps = max(1, min(25, wps))
+            self.config.set("stream_reveal_wps", wps)
+            self.config.save()
+            self.visualizer.set_stream_reveal_wps(wps)
+        elif key == "stream_catch_up_enabled":
+            enabled = bool(value)
+            self.config.set("stream_catch_up_enabled", enabled)
+            self.config.save()
+            self.visualizer.set_stream_catch_up_enabled(enabled)
         elif key in {
             "use_antigravity_proxy_search",
             "antigravity_proxy_url",
@@ -684,10 +712,21 @@ class WhisperAppController(QObject):
                 reason="search pipeline completed after streaming",
             )
         else:
-            self.visualizer.show_answer(
-                cleaned_answer,
-                reason="search pipeline completed",
-            )
+            if self.visualizer.is_stream_realtime_enabled():
+                self.visualizer.show_answer(
+                    cleaned_answer,
+                    reason="search pipeline completed",
+                )
+            else:
+                # No live chunks arrived, but paced mode should still reveal the
+                # final answer at the configured words/sec.
+                self.visualizer.begin_streaming_answer(
+                    reason="search pipeline completed without live stream",
+                )
+                self.visualizer.complete_streaming_answer(
+                    cleaned_answer,
+                    reason="search pipeline completed without live stream",
+                )
         self._search_stream_started = False
 
 

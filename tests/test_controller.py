@@ -23,7 +23,10 @@ def mock_deps():
             "api_key": "test_key",
             "input_device_index": 0,
             "use_formatter": False,
-            "formatter_model": "test_model"
+            "formatter_model": "test_model",
+            "stream_realtime_enabled": True,
+            "stream_reveal_wps": 8,
+            "stream_catch_up_enabled": True,
         }.get(key, default)
         
         # Setup Groq defaults
@@ -34,6 +37,7 @@ def mock_deps():
         # Setup Recorder defaults
         mock_rec_inst = mock_rec_package.return_value
         mock_rec_inst.list_devices.return_value = [(0, "Default")]
+        mock_vis_package.return_value.is_stream_realtime_enabled.return_value = True
         
         yield {
             "config": mock_cfg_inst,
@@ -299,6 +303,53 @@ def test_on_config_changed_animation_fps_updates_visualizer(app, mock_deps):
     controller = WhisperAppController()
     controller.on_config_changed("animation_fps", 120)
     mock_deps["visualizer"].set_animation_fps.assert_called_once_with(120)
+
+
+def test_on_config_changed_stream_realtime_updates_visualizer(app, mock_deps):
+    controller = WhisperAppController()
+
+    controller.on_config_changed("stream_realtime_enabled", False)
+
+    mock_deps["config"].set.assert_any_call("stream_realtime_enabled", False)
+    mock_deps["config"].save.assert_called()
+    mock_deps["visualizer"].set_stream_realtime_enabled.assert_any_call(False)
+
+
+def test_on_config_changed_stream_reveal_wps_updates_visualizer(app, mock_deps):
+    controller = WhisperAppController()
+
+    controller.on_config_changed("stream_reveal_wps", 13)
+
+    mock_deps["config"].set.assert_any_call("stream_reveal_wps", 13)
+    mock_deps["config"].save.assert_called()
+    mock_deps["visualizer"].set_stream_reveal_wps.assert_any_call(13)
+
+
+def test_on_config_changed_stream_catch_up_updates_visualizer(app, mock_deps):
+    controller = WhisperAppController()
+
+    controller.on_config_changed("stream_catch_up_enabled", False)
+
+    mock_deps["config"].set.assert_any_call("stream_catch_up_enabled", False)
+    mock_deps["config"].save.assert_called()
+    mock_deps["visualizer"].set_stream_catch_up_enabled.assert_any_call(False)
+
+
+def test_on_search_complete_non_stream_uses_paced_reveal_when_realtime_disabled(app, mock_deps):
+    controller = WhisperAppController()
+    controller._search_stream_started = False
+    mock_deps["visualizer"].is_stream_realtime_enabled.return_value = False
+
+    controller.on_search_complete("Final answer")
+
+    mock_deps["visualizer"].begin_streaming_answer.assert_called_once_with(
+        reason="search pipeline completed without live stream",
+    )
+    mock_deps["visualizer"].complete_streaming_answer.assert_called_once_with(
+        "Final answer",
+        reason="search pipeline completed without live stream",
+    )
+    mock_deps["visualizer"].show_answer.assert_not_called()
 
 def test_window_always_shown_on_startup(app, mock_deps):
     """Main window must be shown unconditionally during init_state."""

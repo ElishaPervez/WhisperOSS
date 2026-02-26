@@ -49,6 +49,9 @@ def test_load_default_config():
     assert manager.get("api_key") == ""
     assert manager.get("appearance_mode") == "auto"
     assert manager.get("animation_fps") == 100
+    assert manager.get("stream_realtime_enabled") is True
+    assert manager.get("stream_reveal_wps") == 8
+    assert manager.get("stream_catch_up_enabled") is True
     assert config_file.exists()
     _cleanup_test_config_file(config_file)
 

@@ -195,6 +195,64 @@ def test_proxy_thinking_level_change_emits_normalized_config(app, qtbot, mock_co
     assert blocker.args[1] == "low"
 
 
+def test_stream_realtime_toggle_emits_and_locks_slider(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+
+    assert window.stream_realtime_toggle.isChecked() is True
+    assert window.stream_reveal_speed_slider.isEnabled() is False
+    assert window.stream_catch_up_toggle.isEnabled() is False
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.stream_realtime_toggle.setChecked(False)
+
+    assert blocker.args[0] == "stream_realtime_enabled"
+    assert blocker.args[1] is False
+    assert window.stream_reveal_speed_slider.isEnabled() is True
+    assert window.stream_catch_up_toggle.isEnabled() is True
+    mock_config.set.assert_any_call("stream_realtime_enabled", False)
+    mock_config.save.assert_called()
+
+
+def test_stream_reveal_speed_change_emits_config_changed(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+    window.stream_realtime_toggle.setChecked(False)
+    mock_config.set.reset_mock()
+    mock_config.save.reset_mock()
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.stream_reveal_speed_slider.setValue(12)
+
+    assert blocker.args[0] == "stream_reveal_wps"
+    assert blocker.args[1] == 12
+    assert window.stream_reveal_speed_value.text() == "12 wps"
+    mock_config.set.assert_any_call("stream_reveal_wps", 12)
+    mock_config.save.assert_called()
+
+
+def test_stream_catch_up_toggle_emits_config_changed(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+    window.stream_realtime_toggle.setChecked(False)
+    mock_config.set.reset_mock()
+    mock_config.save.reset_mock()
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.stream_catch_up_toggle.setChecked(False)
+
+    assert blocker.args[0] == "stream_catch_up_enabled"
+    assert blocker.args[1] is False
+    mock_config.set.assert_any_call("stream_catch_up_enabled", False)
+    mock_config.save.assert_called()
+
+
 def test_force_save_persists_and_shows_checkmark(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)

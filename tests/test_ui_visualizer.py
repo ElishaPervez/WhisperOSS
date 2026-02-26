@@ -20,6 +20,7 @@ def test_legacy_visualizer_init(app, qtbot):
     vis = AudioVisualizer()
     qtbot.addWidget(vis)
     assert vis.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert vis.is_stream_realtime_enabled() is True
     
     # Test update delegates to embedded
     vis.update_level(0.5)
@@ -282,6 +283,8 @@ def test_streaming_answer_reveals_progressively_before_completion(app, qtbot):
     qtbot.addWidget(vis)
     vis.show()
     vis.set_processing_mode("Sending API request")
+    vis.set_stream_realtime_enabled(False)
+    vis.set_stream_reveal_wps(8)
 
     text = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
     vis.begin_streaming_answer()
@@ -296,6 +299,72 @@ def test_streaming_answer_reveals_progressively_before_completion(app, qtbot):
     qtbot.wait(1700)
     assert vis._answer_label.text() == text
     assert vis._auto_dismiss_timer.isActive() is True
+
+
+def test_streaming_answer_realtime_mode_tracks_arrived_text_immediately(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+    vis.set_processing_mode("Sending API request")
+    vis.set_stream_realtime_enabled(True)
+
+    vis.begin_streaming_answer()
+    partial = "alpha beta"
+    vis.update_streaming_answer(partial)
+    qtbot.wait(40)
+
+    assert vis._answer_label.text() == partial
+
+
+def test_stream_reveal_wps_clamps_to_supported_range(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+
+    vis.set_stream_reveal_wps(0)
+    assert vis.stream_reveal_wps() == vis.STREAM_MIN_REVEAL_WPS
+
+    vis.set_stream_reveal_wps(999)
+    assert vis.stream_reveal_wps() == vis.STREAM_MAX_REVEAL_WPS
+
+
+def test_stream_catch_up_toggle_controls_backlog_acceleration(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.set_stream_reveal_wps(1)
+    vis._streaming_answer_active = True
+
+    vis.set_stream_catch_up_enabled(True)
+    accelerated = vis._streaming_word_step_ms(backlog_segments=120)
+    assert accelerated < 1000.0
+
+    vis.set_stream_catch_up_enabled(False)
+    strict = vis._streaming_word_step_ms(backlog_segments=120)
+    assert strict == pytest.approx(1000.0, rel=0.001, abs=0.2)
+
+
+def test_answer_rect_remeasures_after_tall_answer_without_stale_height_cache(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis._screen_geometry_for_rect = lambda _: QRect(0, 0, 1400, 900)
+
+    reference = QRect(100, 100, vis.COMPACT_WIDTH, vis.COMPACT_HEIGHT)
+    tall_answer = " ".join(
+        ["Long content with many words and markdown **bold** items."] * 260
+    )
+    short_answer = (
+        "**Claude Code** is Anthropic's agentic CLI tool.\n"
+        "* **Key Features:** Edits local files and runs tests.\n"
+        "* **Updates:** Includes Remote Control and Security.\n"
+        "* **Install:** npm install -g @anthropic-ai/claude-code."
+    )
+
+    tall_rect = vis._answer_rect_for_reference(reference, tall_answer)
+    vis.setGeometry(tall_rect)
+    vis._sync_child_geometry()
+
+    short_rect = vis._answer_rect_for_reference(reference, short_answer)
+
+    assert short_rect.height() < tall_rect.height()
 
 
 def test_streaming_answer_growth_keeps_center_anchor(app, qtbot):

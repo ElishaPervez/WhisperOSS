@@ -449,7 +449,7 @@ class ProxySearchClient:
 
                 content_delta = _extract_content_delta(delta)
                 if content_delta:
-                    text_content = self._merge_text_fragments(text_content, content_delta)
+                    text_content = self._merge_stream_text_fragments(text_content, content_delta)
                     if text_content != last_stream_text:
                         last_stream_text = text_content
                         self._emit_stream_text(stream_callback, text_content)
@@ -527,6 +527,24 @@ class ProxySearchClient:
         if base[-1].isspace() or tail[0] in ".,;:!?)]}\n ":
             return base + tail
         return base + " " + tail
+
+    @staticmethod
+    def _merge_stream_text_fragments(existing: str, fragment: str) -> str:
+        """Merge streaming deltas without injecting synthetic spaces mid-word."""
+        base = str(existing or "")
+        tail = str(fragment or "")
+        if not base:
+            return tail
+        if not tail:
+            return base
+        if tail in base or base.endswith(tail):
+            return base
+
+        max_overlap = min(120, len(base), len(tail))
+        for overlap in range(max_overlap, 12, -1):
+            if base.endswith(tail[:overlap]):
+                return base + tail[overlap:]
+        return base + tail
 
     @staticmethod
     def _build_continuation_payload(base_payload: Dict[str, Any], assistant_text: str) -> Dict[str, Any]:

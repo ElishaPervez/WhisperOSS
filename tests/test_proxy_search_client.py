@@ -398,6 +398,22 @@ def test_run_search_tries_next_attempt_when_continuation_remains_truncated():
     assert "tools" in calls[2]
 
 
+def test_merge_stream_text_fragments_does_not_insert_mid_word_space():
+    merged = ProxySearchClient._merge_stream_text_fragments(
+        "This meme references ***Jujutsu K",
+        "aisen*** and a classroom joke.",
+    )
+    assert merged == "This meme references ***Jujutsu Kaisen*** and a classroom joke."
+
+
+def test_merge_text_fragments_keeps_plaintext_join_heuristic_for_continuations():
+    merged = ProxySearchClient._merge_text_fragments(
+        "Part one",
+        "part two",
+    )
+    assert merged == "Part one part two"
+
+
 def test_run_search_is_stateless_payload():
     client = ProxySearchClient(
         base_url="http://127.0.0.1:8045",
