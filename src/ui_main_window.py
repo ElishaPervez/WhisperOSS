@@ -277,10 +277,14 @@ class MainWindow(QWidget):
             self._window_effect = WindowEffect()
 
             def apply_and_track():
-                self._blur_active = self._window_effect.set_acrylic(self.winId())
-                self._window_effect.set_rounded_corners(self.winId())
-                if self._blur_active:
-                    self.update()
+                try:
+                    self._blur_active = self._window_effect.set_acrylic(self.winId())
+                    self._window_effect.set_rounded_corners(self.winId())
+                    if self._blur_active:
+                        self.update()
+                except RuntimeError:
+                    # Widget was already destroyed before the timer fired (e.g. in tests).
+                    pass
 
             QTimer.singleShot(100, apply_and_track)
         except ImportError:
@@ -296,6 +300,10 @@ class MainWindow(QWidget):
         except (TypeError, ValueError):
             fps = 100
         return max(30, min(240, fps))
+
+    def _normalize_proxy_thinking_level(self, value):
+        normalized = str(value or "high").strip().lower()
+        return normalized if normalized in {"high", "medium", "low", "none"} else "high"
 
     def _resolve_dark_theme(self):
         if self._appearance_mode == "dark":
@@ -580,6 +588,16 @@ class MainWindow(QWidget):
                 color: #b91c1c;
             }
 
+            QLabel#SaveFeedback {
+                color: #0f766e;
+                font-size: 12px;
+                font-weight: 700;
+            }
+
+            QLabel#SaveFeedback[state='error'] {
+                color: #b91c1c;
+            }
+
             QFrame#ProxyHelp {
                 border: 1px solid rgba(248, 113, 113, 0.34);
                 border-radius: 10px;
@@ -773,6 +791,14 @@ class MainWindow(QWidget):
                 color: #ffc3d2;
             }
 
+            QLabel#SaveFeedback {
+                color: #a6efd4;
+            }
+
+            QLabel#SaveFeedback[state='error'] {
+                color: #ffc3d2;
+            }
+
             QFrame#ProxyHelp {
                 border: 1px solid rgba(188, 79, 103, 0.64);
                 border-radius: 10px;
@@ -955,7 +981,54 @@ class MainWindow(QWidget):
         self.settings_tabs.tabBar().setExpanding(True)
         self.settings_tabs.tabBar().setUsesScrollButtons(False)
         self.settings_tabs.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
+        self.settings_tabs.tabBar().setDrawBase(False)
         settings_layout.addWidget(self.settings_tabs, 1)
+
+        save_action_row = QHBoxLayout()
+        save_action_row.setContentsMargins(0, 0, 0, 0)
+        save_action_row.setSpacing(8)
+        save_action_row.addStretch()
+
+        self.force_save_feedback = QLabel("✓ Saved")
+        self.force_save_feedback.setObjectName("SaveFeedback")
+        self.force_save_feedback.setProperty("state", "ok")
+        self.force_save_feedback.setVisible(False)
+        self.force_save_feedback_effect = QGraphicsOpacityEffect(self.force_save_feedback)
+        self.force_save_feedback_effect.setOpacity(0.0)
+        self.force_save_feedback.setGraphicsEffect(self.force_save_feedback_effect)
+        save_action_row.addWidget(self.force_save_feedback)
+
+        self.force_save_btn = QPushButton("Save")
+        self.force_save_btn.setObjectName("PrimaryAction")
+        self.force_save_btn.setToolTip("Force save settings and re-apply runtime configuration.")
+        self.force_save_btn.setMinimumWidth(120)
+        self.force_save_btn.clicked.connect(self.on_force_save_clicked)
+        save_action_row.addWidget(self.force_save_btn)
+
+        self.force_save_fade_in = QPropertyAnimation(self.force_save_feedback_effect, b"opacity", self)
+        self.force_save_fade_in.setDuration(130)
+        self.force_save_fade_in.setStartValue(0.0)
+        self.force_save_fade_in.setEndValue(1.0)
+        self.force_save_fade_in.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self.force_save_fade_out = QPropertyAnimation(self.force_save_feedback_effect, b"opacity", self)
+        self.force_save_fade_out.setDuration(260)
+        self.force_save_fade_out.setStartValue(1.0)
+        self.force_save_fade_out.setEndValue(0.0)
+        self.force_save_fade_out.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.force_save_fade_out.finished.connect(self._hide_force_save_feedback)
+
+        self.force_save_hide_timer = QTimer(self)
+        self.force_save_hide_timer.setSingleShot(True)
+        self.force_save_hide_timer.timeout.connect(self._fade_out_force_save_feedback)
+
+        self._force_save_in_progress = False
+        self._force_save_loading_step = 0
+        self.force_save_loading_timer = QTimer(self)
+        self.force_save_loading_timer.setInterval(170)
+        self.force_save_loading_timer.timeout.connect(self._tick_force_save_loading)
+
+        settings_layout.addLayout(save_action_row)
 
         # Pipeline tab
         pipeline_tab = QWidget()
@@ -1158,6 +1231,25 @@ class MainWindow(QWidget):
             self.on_proxy_fallback_model_changed
         )
         advanced_layout.addWidget(self.proxy_fallback_model_input)
+
+        self.proxy_thinking_label = QLabel("Proxy Thinking Level")
+        advanced_layout.addWidget(self.proxy_thinking_label)
+        self.proxy_thinking_combo = QComboBox()
+        self.proxy_thinking_combo.addItems(["High", "Medium", "Low", "None"])
+        thinking_level = self._normalize_proxy_thinking_level(
+            self.config.get("antigravity_thinking_level", "high")
+        )
+        thinking_labels = {
+            "high": "High",
+            "medium": "Medium",
+            "low": "Low",
+            "none": "None",
+        }
+        self.proxy_thinking_combo.setCurrentText(thinking_labels[thinking_level])
+        self.proxy_thinking_combo.currentTextChanged.connect(
+            self.on_proxy_thinking_level_changed
+        )
+        advanced_layout.addWidget(self.proxy_thinking_combo)
         advanced_layout.addStretch()
 
         advanced_tab.setWidget(advanced_page)
@@ -1251,6 +1343,95 @@ class MainWindow(QWidget):
         self.api_key_save_btn.setEnabled(enabled)
         self.api_key_commit_btn.setEnabled(enabled)
 
+    def _show_force_save_feedback(self, text, state):
+        self.force_save_hide_timer.stop()
+        self.force_save_fade_in.stop()
+        self.force_save_fade_out.stop()
+
+        self.force_save_feedback.setText(text)
+        self.force_save_feedback.setProperty("state", state)
+        self.force_save_feedback.style().unpolish(self.force_save_feedback)
+        self.force_save_feedback.style().polish(self.force_save_feedback)
+        self.force_save_feedback.setVisible(True)
+        self.force_save_feedback_effect.setOpacity(0.0)
+        self.force_save_fade_in.start()
+
+        if state == "ok":
+            self.force_save_hide_timer.start(1200)
+
+    def _fade_out_force_save_feedback(self):
+        self.force_save_fade_out.stop()
+        self.force_save_fade_out.start()
+
+    def _hide_force_save_feedback(self):
+        self.force_save_feedback.setVisible(False)
+
+    def _tick_force_save_loading(self):
+        dots = "." * ((self._force_save_loading_step % 3) + 1)
+        self.force_save_btn.setText(f"Saving{dots}")
+        self._force_save_loading_step += 1
+
+    def _start_force_save_loading(self):
+        self._force_save_in_progress = True
+        self._force_save_loading_step = 0
+        self.force_save_btn.setEnabled(False)
+        self.force_save_btn.setText("Saving...")
+        self.force_save_loading_timer.start()
+
+    def _stop_force_save_loading(self):
+        self.force_save_loading_timer.stop()
+        self.force_save_btn.setEnabled(True)
+        self.force_save_btn.setText("Save")
+        self._force_save_in_progress = False
+
+    def _persist_force_save_settings(self):
+        self.config.set("input_device_index", self.device_combo.currentData())
+        self.config.set("use_formatter", self.format_toggle.isChecked())
+        self.config.set("formatter_model", self.model_combo.currentText().strip())
+        self.config.set(
+            "translation_enabled",
+            self.translation_toggle.isChecked() and self.translation_toggle.isEnabled(),
+        )
+        self.config.set("target_language", self.language_input.currentText().strip() or "English")
+        self.config.set("appearance_mode", self._appearance_mode)
+        self.config.set("animation_fps", self._animation_fps)
+
+        self.config.set("use_antigravity_proxy_search", self.proxy_search_toggle.isChecked())
+        self.config.set("antigravity_proxy_url", self.proxy_url_input.text().strip())
+        self.config.set("antigravity_api_key", self.proxy_api_key_input.text().strip())
+        self.config.set("antigravity_search_model", self.proxy_model_input.text().strip())
+        self.config.set(
+            "antigravity_search_fallback_model",
+            self.proxy_fallback_model_input.text().strip(),
+        )
+        self.config.set(
+            "antigravity_thinking_level",
+            self._normalize_proxy_thinking_level(self.proxy_thinking_combo.currentText()),
+        )
+
+        return self.config.save()
+
+    def _emit_force_reconfigure(self):
+        device_id = self.device_combo.currentData()
+        if device_id is not None:
+            self.config_changed.emit("input_device_index", device_id)
+
+        self.config_changed.emit("animation_fps", self._animation_fps)
+
+        proxy_enabled = self.proxy_search_toggle.isChecked()
+        self.config_changed.emit("use_antigravity_proxy_search", proxy_enabled)
+        self.config_changed.emit("antigravity_proxy_url", self.proxy_url_input.text().strip())
+        self.config_changed.emit("antigravity_api_key", self.proxy_api_key_input.text().strip())
+        self.config_changed.emit("antigravity_search_model", self.proxy_model_input.text().strip())
+        self.config_changed.emit(
+            "antigravity_search_fallback_model",
+            self.proxy_fallback_model_input.text().strip(),
+        )
+        self.config_changed.emit(
+            "antigravity_thinking_level",
+            self._normalize_proxy_thinking_level(self.proxy_thinking_combo.currentText()),
+        )
+
     def _refresh_pipeline_summary(self):
         use_formatter = self.format_toggle.isChecked()
         use_translation = self.translation_toggle.isChecked() and self.translation_toggle.isEnabled()
@@ -1297,6 +1478,8 @@ class MainWindow(QWidget):
         self.proxy_model_input.setEnabled(enabled)
         self.proxy_fallback_model_label.setEnabled(enabled)
         self.proxy_fallback_model_input.setEnabled(enabled)
+        self.proxy_thinking_label.setEnabled(enabled)
+        self.proxy_thinking_combo.setEnabled(enabled)
 
         if animate:
             self._animate_proxy_help(enabled)
@@ -1349,6 +1532,18 @@ class MainWindow(QWidget):
         self.proxy_fallback_model_input.setText(
             self.config.get("antigravity_search_fallback_model", "gemini-2.5-flash")
         )
+        thinking_labels = {
+            "high": "High",
+            "medium": "Medium",
+            "low": "Low",
+            "none": "None",
+        }
+        proxy_thinking_level = self._normalize_proxy_thinking_level(
+            self.config.get("antigravity_thinking_level", "high")
+        )
+        self.proxy_thinking_combo.blockSignals(True)
+        self.proxy_thinking_combo.setCurrentText(thinking_labels[proxy_thinking_level])
+        self.proxy_thinking_combo.blockSignals(False)
         self._set_proxy_settings_enabled(proxy_enabled, animate=False)
 
         self._refresh_pipeline_summary()
@@ -1594,6 +1789,10 @@ class MainWindow(QWidget):
             self.proxy_fallback_model_input.text(),
         )
 
+    def on_proxy_thinking_level_changed(self, text):
+        normalized = self._normalize_proxy_thinking_level(text)
+        self._save_proxy_field("antigravity_thinking_level", normalized)
+
     def on_proxy_api_key_toggle_visibility(self):
         showing = self.proxy_api_key_input.echoMode() == QLineEdit.EchoMode.Normal
         if showing:
@@ -1602,6 +1801,36 @@ class MainWindow(QWidget):
         else:
             self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
             self.proxy_api_key_toggle_btn.setText("Hide")
+
+    def on_force_save_clicked(self):
+        if self._force_save_in_progress:
+            return
+
+        self.force_save_hide_timer.stop()
+        self.force_save_fade_in.stop()
+        self.force_save_fade_out.stop()
+        self.force_save_feedback.setVisible(False)
+        self._start_force_save_loading()
+        QTimer.singleShot(320, self._complete_force_save)
+
+    def _complete_force_save(self):
+        try:
+            save_result = self._persist_force_save_settings()
+        except Exception:
+            self._stop_force_save_loading()
+            self._show_force_save_feedback("Save failed", "error")
+            self._set_error_status("Save failed")
+            return
+
+        self._stop_force_save_loading()
+        save_ok = True if save_result is None else bool(save_result)
+        if not save_ok:
+            self._show_force_save_feedback("Save failed", "error")
+            self._set_error_status("Save failed")
+            return
+
+        self._emit_force_reconfigure()
+        self._show_force_save_feedback("✓ Saved", "ok")
 
     def on_api_key_toggle_visibility(self):
         showing = self.api_key_input.echoMode() == QLineEdit.EchoMode.Normal

@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import List, Tuple, Optional, Union, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 from groq import Groq, APIConnectionError, APIStatusError
 from src.prompts import SYSTEM_PROMPT_FORMATTER
 
@@ -125,30 +125,27 @@ class GroqClient:
         except Exception as e:
             raise GroqClientError(f"Formatting failed: {e}")
 
-    def run_search(self, query: str) -> str:
+    def run_search(
+        self,
+        query: str,
+    ) -> str:
         if not self.client:
             raise GroqClientError("API Key not set.")
 
         try:
             from src.prompts import SYSTEM_PROMPT_SEARCH
 
+            messages = [{"role": "system", "content": SYSTEM_PROMPT_SEARCH}]
+            messages.append({"role": "user", "content": query})
+
             # Using 'groq/compound' which has native tool use capabilities (search)
             # The model decides when to search based on the query.
             completion = self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT_SEARCH
-                    },
-                    {
-                        "role": "user",
-                        "content": query
-                    }
-                ],
+                messages=messages,
                 model="groq/compound",
-                temperature=0.0
+                temperature=0.0,
             )
             return str(completion.choices[0].message.content)
         except Exception as e:
             logger.error(f"Search failed: {e}")
-            return f"Search Error: {str(e)}"
+            raise GroqClientError(f"Search failed: {str(e)}") from e

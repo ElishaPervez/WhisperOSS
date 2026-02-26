@@ -95,3 +95,30 @@ def test_format_text_error(mock_groq_package):
     
     with pytest.raises(GroqClientError, match="Formatting failed: Format Fail"):
         client.format_text("raw")
+
+
+def test_run_search_raises_on_api_exception(mock_groq_package):
+    """run_search must raise GroqClientError on failure, not return an error string."""
+    client = GroqClient("key")
+    mock_instance = mock_groq_package.return_value
+    mock_instance.chat.completions.create.side_effect = Exception("network down")
+
+    with pytest.raises(GroqClientError, match="Search failed: network down"):
+        client.run_search("what is the capital of France?")
+
+
+def test_run_search_is_stateless(mock_groq_package):
+    client = GroqClient("key")
+    mock_instance = mock_groq_package.return_value
+
+    mock_completion = MagicMock()
+    mock_completion.choices[0].message.content = "Specialized answer"
+    mock_instance.chat.completions.create.return_value = mock_completion
+
+    result = client.run_search("new question")
+
+    assert result == "Specialized answer"
+    kwargs = mock_instance.chat.completions.create.call_args.kwargs
+    msgs = kwargs["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[1] == {"role": "user", "content": "new question"}

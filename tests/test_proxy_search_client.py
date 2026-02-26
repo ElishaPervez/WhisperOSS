@@ -226,6 +226,33 @@ def test_run_search_builds_multimodal_payload_when_image_is_provided():
     assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
+def test_run_search_includes_thinking_budget_from_level():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+        thinking_level="low",
+    )
+    calls = []
+
+    def fake_json_request(method, path, payload):
+        calls.append(payload)
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {"choices": [{"message": {"content": "Looks good."}}]},
+            "",
+        )
+
+    client._json_request = fake_json_request
+    result = client.run_search("quick check")
+
+    assert result == "Looks good."
+    assert calls
+    assert calls[0]["thinking"]["type"] == "enabled"
+    assert calls[0]["thinking"]["budget_tokens"] == 4096
+
+
 def test_run_search_auto_continues_when_finish_reason_is_length():
     client = ProxySearchClient(
         base_url="http://127.0.0.1:8045",
@@ -369,3 +396,142 @@ def test_run_search_tries_next_attempt_when_continuation_remains_truncated():
     assert len(calls) == 3
     assert calls[2]["model"] == "gemini-3-flash"
     assert "tools" in calls[2]
+
+
+def test_run_search_is_stateless_payload():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    calls = []
+
+    def fake_json_request(method, path, payload):
+        calls.append(payload)
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {"choices": [{"message": {"content": "Use the confirmed fix from thread X."}}]},
+            "",
+        )
+
+    client._json_request = fake_json_request
+
+    result = client.run_search("my new issue")
+
+    assert result == "Use the confirmed fix from thread X."
+    assert calls
+    messages = calls[0]["messages"]
+    assert messages[0]["role"] == "system"
+    assert len(messages) == 2
+    assert messages[1] == {"role": "user", "content": "my new issue"}
+
+
+def test_run_search_uses_streaming_path_when_step_callback_is_present():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    steps = []
+
+    def fake_stream(payload, step_callback=None):
+        assert payload["stream"] is True
+        if step_callback is not None:
+            step_callback("Sending API request")
+            step_callback("Thinking")
+            step_callback("Searching the web")
+            step_callback("Using web results")
+            step_callback("Writing answer")
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Use this exact fix from the thread.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+            "",
+        )
+
+    client._stream_chat_completion = fake_stream
+
+    result = client.run_search("specific issue", step_callback=steps.append)
+
+    assert result == "Use this exact fix from the thread."
+    assert "Sending API request" in steps
+    assert "Searching the web" in steps
+    assert "Using web results" in steps
+    assert "Thinking" in steps
+    assert "Finalizing answer" in steps
+
+
+def test_run_search_falls_back_to_json_when_stream_request_fails():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    json_calls = []
+
+    def fake_stream(payload, step_callback=None):
+        return 503, {}, None, "stream unavailable"
+
+    def fake_json_request(method, path, payload):
+        json_calls.append(payload)
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {"choices": [{"message": {"content": "Recovered via non-stream request."}}]},
+            "",
+        )
+
+    client._stream_chat_completion = fake_stream
+    client._json_request = fake_json_request
+
+    result = client.run_search("specific issue", step_callback=lambda _: None)
+
+    assert result == "Recovered via non-stream request."
+    assert len(json_calls) == 1
+
+
+def test_run_search_does_not_emit_searching_web_without_search_signals():
+    client = ProxySearchClient(
+        base_url="http://127.0.0.1:8045",
+        primary_model="gemini-3-flash",
+        fallback_model="gemini-2.5-flash",
+    )
+    steps = []
+
+    def fake_stream(payload, step_callback=None):
+        if step_callback is not None:
+            step_callback("Thinking")
+            step_callback("Writing answer")
+        return (
+            200,
+            {"X-Mapped-Model": "gemini-3-flash-online"},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Boil or fry an egg.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+            "",
+        )
+
+    client._stream_chat_completion = fake_stream
+
+    result = client.run_search("how to make an egg", step_callback=steps.append)
+
+    assert result == "Boil or fry an egg."
+    assert "Sending API request" in steps
+    assert "Searching the web" not in steps

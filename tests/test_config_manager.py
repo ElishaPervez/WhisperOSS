@@ -112,3 +112,43 @@ def test_plaintext_fallback_when_secure_store_unavailable():
         new_manager = ConfigManager(config_file=config_file)
     assert new_manager.get("api_key") == "secret_key"
     _cleanup_test_config_file(config_file)
+
+
+def test_load_config_merges_missing_keys_from_defaults():
+    """An older config file that is missing new keys must have them filled in from DEFAULT_CONFIG."""
+    from src.config_manager import DEFAULT_CONFIG
+
+    config_file = _new_test_config_file()
+    # Write a sparse config that omits most keys (simulates an old installation).
+    sparse = {"use_formatter": True, "animation_fps": 60}
+    config_file.write_text(json.dumps(sparse), encoding="utf-8")
+
+    fake_store = FakeSecureStore(available=True)
+    with patch("src.config_manager.ApiKeyStore", return_value=fake_store):
+        manager = ConfigManager(config_file=config_file)
+
+    # Keys present in sparse config are preserved.
+    assert manager.get("use_formatter") is True
+    assert manager.get("animation_fps") == 60
+
+    # Keys absent from the file are filled from DEFAULT_CONFIG.
+    for key, default_value in DEFAULT_CONFIG.items():
+        if key in sparse or key == "api_key":
+            continue
+        assert manager.get(key) == default_value, (
+            f"Missing key '{key}' was not migrated from DEFAULT_CONFIG"
+        )
+    _cleanup_test_config_file(config_file)
+
+
+def test_formatting_style_default_is_returned_when_key_missing():
+    """formatting_style must default to 'Default' for configs that pre-date its addition."""
+    config_file = _new_test_config_file()
+    config_file.write_text(json.dumps({"use_formatter": False}), encoding="utf-8")
+
+    fake_store = FakeSecureStore(available=True)
+    with patch("src.config_manager.ApiKeyStore", return_value=fake_store):
+        manager = ConfigManager(config_file=config_file)
+
+    assert manager.get("formatting_style") == "Default"
+    _cleanup_test_config_file(config_file)

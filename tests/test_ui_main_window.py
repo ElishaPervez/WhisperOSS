@@ -181,3 +181,54 @@ def test_proxy_url_change_emits_config_changed(app, qtbot, mock_config):
 
     assert blocker.args[0] == "antigravity_proxy_url"
     assert blocker.args[1] == "http://127.0.0.1:9000"
+
+def test_proxy_thinking_level_change_emits_normalized_config(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.proxy_search_toggle.setChecked(True)
+
+    with qtbot.waitSignal(window.config_changed) as blocker:
+        window.proxy_thinking_combo.setCurrentText("Low")
+
+    assert blocker.args[0] == "antigravity_thinking_level"
+    assert blocker.args[1] == "low"
+
+
+def test_force_save_persists_and_shows_checkmark(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+    window.set_device_list([(0, "Mic 1"), (1, "Mic 2")])
+    window.device_combo.setCurrentIndex(1)
+
+    mock_config.save.return_value = True
+    mock_config.save.reset_mock()
+
+    with qtbot.waitSignal(window.config_changed):
+        window.on_force_save_clicked()
+        assert window.force_save_btn.isEnabled() is False
+        assert window.force_save_btn.text().startswith("Saving")
+
+    qtbot.waitUntil(lambda: window.force_save_btn.isEnabled(), timeout=2000)
+
+    mock_config.save.assert_called_once()
+    assert window.force_save_btn.text() == "Save"
+    assert window.force_save_feedback.text() == "✓ Saved"
+    assert window.force_save_feedback.isVisible() is True
+
+
+def test_force_save_failure_shows_error(app, qtbot, mock_config):
+    window = MainWindow(mock_config)
+    qtbot.addWidget(window)
+    window.show()
+
+    mock_config.save.return_value = False
+    window.on_force_save_clicked()
+    assert window.force_save_btn.isEnabled() is False
+    assert window.force_save_btn.text().startswith("Saving")
+
+    qtbot.waitUntil(lambda: window.force_save_btn.isEnabled(), timeout=2000)
+
+    assert window.force_save_feedback.text() == "Save failed"
+    assert window.force_save_feedback.isVisible() is True

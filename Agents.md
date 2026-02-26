@@ -1,0 +1,1 @@
+Whenever discusisng a new few feature, barrage me with questions, and force me to answer edge cases and clear all your doubts before u start implementation, upto 200 questions allowed

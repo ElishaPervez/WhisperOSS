@@ -4,8 +4,6 @@ from pathlib import Path
 import logging
 from src.secret_store import ApiKeyStore
 
-# Setup basic logging if not already configured
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Use AppData/Roaming for Windows standard
@@ -20,14 +18,20 @@ DEFAULT_CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "api_key": "",
-    "transcription_model": "whisper-large-v3",
+    # "transcription_model" removed — TranscriptionWorker uses whisper-large-v3 directly.
+    # Add back here and wire to TranscriptionWorker if model selection is needed in future.
     "formatter_model": "openai/gpt-oss-120b",  # Default fast/smart model
+    # formatting_style selects the LLM formatter prompt (Default/Casual/Email/Google Docs).
+    # The value is read by the controller and forwarded to TranscriptionWorker.
+    # There is currently no UI control to change it; it always falls back to "Default".
+    "formatting_style": "Default",
     # Quick-answer web search provider. Default stays Groq for out-of-box usability.
     "use_antigravity_proxy_search": False,
     "antigravity_proxy_url": "http://127.0.0.1:8045",
     "antigravity_api_key": "",
     "antigravity_search_model": "gemini-3-flash",
     "antigravity_search_fallback_model": "gemini-2.5-flash",
+    "antigravity_thinking_level": "high",
     "input_device_index": None, # None means default
     "appearance_mode": "auto",  # auto | dark | light
     "animation_fps": 100,
@@ -89,13 +93,19 @@ class ConfigManager:
             logger.error(f"Failed to ensure config existence: {e}")
 
     def _load_config(self):
-        """Load configuration from file."""
+        """Load configuration from file, merging any missing keys from DEFAULT_CONFIG."""
         try:
             if not self.config_file.exists():
                 return DEFAULT_CONFIG.copy()
 
             with open(self.config_file, 'r') as f:
-                return json.load(f)
+                loaded = json.load(f)
+
+            # Forward-migrate: add keys that exist in DEFAULT_CONFIG but are absent
+            # from an older config file so callers can always rely on every key existing.
+            merged = DEFAULT_CONFIG.copy()
+            merged.update(loaded)
+            return merged
         except json.JSONDecodeError:
             logger.warning(f"Config file {self.config_file} is corrupt. Using defaults.")
             return DEFAULT_CONFIG.copy()
@@ -108,8 +118,10 @@ class ConfigManager:
         try:
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=4)
+            return True
         except OSError as e:
             logger.error(f"Failed to save config to {self.config_file}: {e}")
+            return False
 
     def get(self, key, default=None):
         """Get a configuration value."""
@@ -141,4 +153,4 @@ class ConfigManager:
 
     def save(self):
         """Persist current configuration to disk."""
-        self._save_config(self.config)
+        return self._save_config(self.config)

@@ -1,5 +1,4 @@
 import sys
-import threading
 import time
 import ctypes
 import keyboard
@@ -9,7 +8,7 @@ import io
 from typing import Optional, Any
 from groq import Groq as GroqRaw, AuthenticationError as GroqAuthError, APIConnectionError as GroqConnError
 from PyQt6.QtWidgets import QApplication, QDialog, QSystemTrayIcon, QMenu
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, QByteArray, QBuffer, QIODevice, Qt, QTimer, QMimeData
 from PyQt6.QtGui import QIcon, QAction, QCursor
 
 
@@ -21,7 +20,9 @@ from src.hotkey_manager import HotkeyManager
 from src.ui_main_window import MainWindow
 from src.ui_onboarding import SetupMessageDialog, ApiKeyInputDialog
 from src.ui_visualizer import AudioVisualizer
+from src.ui_screen_snip import ScreenRegionSelector
 from src.services.groq_service import TranscriptionWorker, SearchWorker
+from src.debug_trace import configure_debug_trace, trace_widget_event
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -48,16 +49,25 @@ class WhisperAppController(QObject):
     # New signals for search mode
     _start_search_signal = pyqtSignal()
     _stop_search_signal = pyqtSignal()
+    _start_image_search_signal = pyqtSignal()
+    _stop_image_search_signal = pyqtSignal()
     _paste_completed_signal = pyqtSignal()
     _paste_failed_signal = pyqtSignal()
+    _search_progress_signal = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
+        self._debug_path = configure_debug_trace()
+        trace_widget_event(
+            "controller_init",
+            trigger="WhisperAppController.__init__",
+            reason="controller startup",
+            debug_path=str(self._debug_path),
+        )
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False) # Keep running for system tray
 
         self.recording_mode = "transcribe" # "transcribe" or "search"
-        self._show_window_after_setup = False
 
         # Load config first
         self.config = ConfigManager()
@@ -68,8 +78,11 @@ class WhisperAppController(QObject):
 
         self._start_search_signal.connect(lambda: self.set_recording(True, "search"))
         self._stop_search_signal.connect(lambda: self.set_recording(False))
+        self._start_image_search_signal.connect(lambda: self.set_recording(True, "search_image"))
+        self._stop_image_search_signal.connect(lambda: self.set_recording(False))
         self._paste_completed_signal.connect(self._on_paste_completed)
         self._paste_failed_signal.connect(self._on_paste_failed)
+        self._search_progress_signal.connect(self._on_search_progress)
 
         # Check for first run (no API key) and prompt before initializing
         self._check_first_run_api_key()
@@ -81,6 +94,7 @@ class WhisperAppController(QObject):
             fallback_model=self.config.get(
                 "antigravity_search_fallback_model", "gemini-2.5-flash"
             ),
+            thinking_level=self.config.get("antigravity_thinking_level", "high"),
         )
         self.recorder = AudioRecorder(self.config.get("input_device_index"))
 
@@ -89,7 +103,9 @@ class WhisperAppController(QObject):
             modifiers=['ctrl'],
             trigger_key='win',
             on_start=self._start_recording_signal.emit,
-            on_stop=self._stop_recording_signal.emit
+            on_stop=self._stop_recording_signal.emit,
+            forbidden_keys=['shift'],
+            activation_delay_ms=85,
         )
 
         # Search Hotkey: Win+Ctrl (Quick Answer)
@@ -97,7 +113,17 @@ class WhisperAppController(QObject):
             modifiers=['win'], # Logic handles left/right windows
             trigger_key='ctrl',
             on_start=self._start_search_signal.emit,
-            on_stop=self._stop_search_signal.emit
+            on_stop=self._stop_search_signal.emit,
+            forbidden_keys=['shift'],
+            activation_delay_ms=85,
+        )
+
+        # Visual Search Hotkey: Win+Alt (crosshair area + voice question)
+        self.image_search_hotkey = HotkeyManager(
+            modifiers=['win'],
+            trigger_key='alt',
+            on_start=self._start_image_search_signal.emit,
+            on_stop=self._stop_image_search_signal.emit,
         )
 
         # UI
@@ -115,6 +141,7 @@ class WhisperAppController(QObject):
         self.init_state()
 
         self.worker: Optional[QObject] = None
+        self._search_stream_started = False
 
     def _check_first_run_api_key(self) -> None:
         """Prompt for API key on first run, validating against the Groq API."""
@@ -170,7 +197,6 @@ class WhisperAppController(QObject):
 
                 self.config.set("api_key", entered_key)
                 self.config.save()
-                self._show_window_after_setup = True
                 logger.info("API key validated and saved successfully.")
                 break
 
@@ -208,7 +234,9 @@ class WhisperAppController(QObject):
 
     def connect_signals(self) -> None:
         # UI -> Logic
-        self.window.record_toggled.connect(self.set_recording)
+        # record_toggled is intentionally not connected here; recording is driven
+        # exclusively by HotkeyManager signals.  The signal is retained in
+        # MainWindow for callers that may want to add a UI record button later.
         self.window.config_changed.connect(self.on_config_changed)
 
         # Recorder -> Floating visualizer overlay
@@ -228,6 +256,7 @@ class WhisperAppController(QObject):
         # Start global listeners
         self.hotkey_mgr.start_listening()
         self.search_hotkey.start_listening()
+        self.image_search_hotkey.start_listening()
 
         # Always open visible on startup instead of tray-only.
         self.show_window()
@@ -257,6 +286,7 @@ class WhisperAppController(QObject):
             "antigravity_api_key",
             "antigravity_search_model",
             "antigravity_search_fallback_model",
+            "antigravity_thinking_level",
         }:
             self.config.set(key, value)
             self.config.save()
@@ -267,6 +297,7 @@ class WhisperAppController(QObject):
                 fallback_model=self.config.get(
                     "antigravity_search_fallback_model", "gemini-2.5-flash"
                 ),
+                thinking_level=self.config.get("antigravity_thinking_level", "high"),
             )
 
     def refresh_models(self) -> None:
@@ -291,8 +322,17 @@ class WhisperAppController(QObject):
         self.window.set_recording_state(recording)
 
         if recording:
+            trace_widget_event(
+                "widget_state_request",
+                trigger="controller.set_recording",
+                reason="recording started",
+                recording=recording,
+                mode=mode,
+                widget_mode="listening",
+            )
+            self._search_stream_started = False
             self.recording_mode = mode
-            self.visualizer.set_listening_mode()
+            self.visualizer.set_listening_mode(reason=f"recording started ({mode})")
             # Show first, then position - some window systems reset position during show()
             self.visualizer.show()
             self._position_visualizer_at_cursor()
@@ -300,10 +340,73 @@ class WhisperAppController(QObject):
         else:
             # Keep visualizer visible and switch to a processing animation
             # while the API request and transcription are in progress.
-            self.visualizer.set_processing_mode()
+            trace_widget_event(
+                "widget_state_request",
+                trigger="controller.set_recording",
+                reason="recording stopped; request pipeline pending",
+                recording=recording,
+                mode=self.recording_mode,
+                widget_mode="processing",
+            )
+            self.visualizer.set_processing_mode(
+                "Processing",
+                reason="recording stopped; awaiting API pipeline",
+            )
             self.recorder.stop_recording()
 
+    def _on_search_progress(self, text: str) -> None:
+        cleaned = " ".join(str(text or "").split()).strip()
+        if not cleaned:
+            return
+        if cleaned.lower() == "refining query":
+            trace_widget_event(
+                "widget_step_signal_skipped",
+                trigger="controller._on_search_progress",
+                reason="refining query step hidden in compact widget",
+                step=cleaned,
+            )
+            return
+        trace_widget_event(
+            "widget_step_signal",
+            trigger="controller._on_search_progress",
+            reason="SearchWorker.progress signal",
+            step=cleaned,
+        )
+        self.visualizer.set_processing_step(
+            cleaned,
+            reason="SearchWorker.progress signal",
+        )
 
+    def _on_search_stream_text(self, rendered_text: str) -> None:
+        text = str(rendered_text or "")
+        if not text:
+            return
+        if not self._search_stream_started:
+            self._search_stream_started = True
+            trace_widget_event(
+                "widget_stream_started",
+                trigger="controller._on_search_stream_text",
+                reason="first streamed answer chunk received",
+            )
+            self.visualizer.begin_streaming_answer(reason="first streamed answer chunk")
+        self.visualizer.update_streaming_answer(
+            text,
+            reason="proxy streamed answer chunk",
+        )
+
+    def _show_proxy_required_notice(self) -> None:
+        notice = "Antigravity proxy needed for image context answer."
+        self.window.update_log(notice)
+        self.visualizer.set_processing_step(
+            "Antigravity proxy needed",
+            reason="image answer attempted while proxy search disabled",
+        )
+        QTimer.singleShot(
+            1600,
+            lambda: self.visualizer.cancel_processing(
+                reason="proxy required for image answer mode"
+            ),
+        )
 
     def _position_visualizer_at_cursor(self) -> None:
         """Position the visualizer at center-bottom of the screen where the cursor is located."""
@@ -333,6 +436,98 @@ class WhisperAppController(QObject):
         # Move and then explicitly set the position to ensure it sticks
         self.visualizer.move(x, y)
 
+    def _capture_selected_text(self, timeout_sec: float = 0.22) -> str:
+        """
+        Best-effort selected-text capture from the active app.
+
+        Strategy:
+        1) Backup clipboard text
+        2) Send Ctrl+C to copy current selection
+        3) Read copied text if clipboard changed
+        4) Restore clipboard text
+        """
+        original_clipboard: Optional[str] = None
+        before_normalized = ""
+
+        try:
+            original_clipboard = pyperclip.paste()
+            before_normalized = " ".join(str(original_clipboard or "").split()).strip()
+        except Exception:
+            original_clipboard = None
+
+        try:
+            keyboard.send("ctrl+c")
+        except Exception as exc:
+            logger.debug("Selection capture skipped: failed to send Ctrl+C (%s)", exc)
+            return ""
+
+        deadline = time.time() + max(0.08, float(timeout_sec))
+        captured = ""
+        while time.time() < deadline:
+            time.sleep(0.03)
+            try:
+                current_clip = pyperclip.paste()
+            except Exception:
+                continue
+
+            normalized = " ".join(str(current_clip or "").split()).strip()
+            if not normalized:
+                continue
+            if normalized != before_normalized:
+                captured = normalized
+                break
+
+        if original_clipboard is not None:
+            try:
+                pyperclip.copy(original_clipboard)
+            except Exception as exc:
+                logger.debug("Selection capture: clipboard restore skipped (%s)", exc)
+
+        if len(captured) > 280:
+            captured = captured[:277] + "..."
+        return captured
+
+    def _capture_screen_region_png(self, max_edge: int = 1400) -> Optional[bytes]:
+        """Open a crosshair selector and return selected image region as PNG bytes."""
+        screen = self.app.screenAt(QCursor.pos())
+        if screen is None:
+            screen = self.app.primaryScreen()
+        if screen is None:
+            logger.warning("Image context capture skipped: no available screen.")
+            return None
+
+        screens = self.app.screens()
+        selector = ScreenRegionSelector(screens=screens, preferred_screen=screen, parent=None)
+        if selector.exec() != int(QDialog.DialogCode.Accepted):
+            return None
+
+        pixmap = selector.selected_pixmap()
+        if pixmap.isNull():
+            return None
+
+        width = pixmap.width()
+        height = pixmap.height()
+        max_dim = max(width, height)
+        if max_dim > max(300, int(max_edge)):
+            scaled_w = max(1, int(round(width * float(max_edge) / float(max_dim))))
+            scaled_h = max(1, int(round(height * float(max_edge) / float(max_dim))))
+            pixmap = pixmap.scaled(
+                scaled_w,
+                scaled_h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+        blob = QByteArray()
+        buffer = QBuffer(blob)
+        if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
+            return None
+        ok = pixmap.save(buffer, "PNG")
+        buffer.close()
+        if not ok:
+            return None
+        return bytes(blob)
+
     def start_transcription(self, audio_source: Any) -> None:
         """Start transcription. audio_source can be BytesIO buffer or file path."""
         self.window.update_log(f"Processing ({self.recording_mode})...")
@@ -341,14 +536,28 @@ class WhisperAppController(QObject):
         use_fmt = self.config.get("use_formatter")
         fmt_model = self.config.get("formatter_model", "openai/gpt-oss-120b") # Default if missing
 
-        if self.recording_mode == "search":
+        if self.recording_mode in {"search", "search_image"}:
             # Quick Answer Mode
             use_proxy_search = bool(self.config.get("use_antigravity_proxy_search", False))
+            self._search_stream_started = False
+            if self.recording_mode == "search_image":
+                if not use_proxy_search:
+                    self._show_proxy_required_notice()
+                    return
+                self._start_image_search_pipeline(audio_source, fmt_model, use_proxy_search)
+                return
+
+            self.visualizer.set_processing_step(
+                "Transcribing speech",
+                reason="search mode entered transcription phase",
+            )
+            selected_text = self._capture_selected_text()
             provider_name = "Antigravity Proxy" if use_proxy_search else "Groq Compound"
             logger.info(
-                "Starting Quick Answer search (Provider: %s, Refiner: %s)...",
+                "Starting Quick Answer search (Provider: %s, Refiner: %s, SelectedContext: %s, ImageContext: no)...",
                 provider_name,
                 fmt_model,
+                "yes" if selected_text else "no",
             )
             # Reuse the formatter model (High Intelligence) for refinement
             self.worker = SearchWorker(
@@ -356,7 +565,10 @@ class WhisperAppController(QObject):
                 audio_source,
                 refinement_model_id=fmt_model,
                 search_client=self.search_client if use_proxy_search else None,
+                selected_text=selected_text,
             )
+            self.worker.progress.connect(self._search_progress_signal.emit)
+            self.worker.stream_text.connect(self._on_search_stream_text)
             self.worker.finished.connect(self.on_search_complete)
             self.worker.error.connect(self.show_error)
             self.worker.start()
@@ -381,62 +593,367 @@ class WhisperAppController(QObject):
             self.worker.error.connect(self.show_error)
             self.worker.start()
 
+    def _start_image_search_pipeline(
+        self,
+        audio_source: Any,
+        refinement_model_id: str,
+        use_proxy_search: bool,
+    ) -> None:
+        """Search-image mode: first transcribe speech, then capture image context."""
+        self.visualizer.set_processing_step(
+            "Transcribing speech",
+            reason="image-search mode transcription phase",
+        )
+        self.window.update_log("Detecting speech for image context...")
+        self.worker = TranscriptionWorker(
+            self.groq,
+            audio_source,
+            use_formatter=False,
+            format_model=refinement_model_id,
+        )
+        self.worker.finished.connect(
+            lambda raw_text, _final_text: self._continue_image_search_pipeline(
+                raw_text,
+                refinement_model_id,
+                use_proxy_search,
+            )
+        )
+        self.worker.error.connect(self.show_error)
+        self.worker.start()
+
+    def _continue_image_search_pipeline(
+        self,
+        raw_text: str,
+        refinement_model_id: str,
+        use_proxy_search: bool,
+    ) -> None:
+        """Continue search-image mode once speech has been transcribed."""
+        query_text = (raw_text or "").strip()
+        if not query_text:
+            self.show_error("No speech detected.")
+            return
+
+        self.visualizer.set_processing_step(
+            "Waiting for image selection",
+            reason="transcription complete; waiting for image selection",
+        )
+        self.window.update_log("Select an on-screen region for image context...")
+        image_png_bytes = self._capture_screen_region_png()
+        if image_png_bytes is None:
+            self.window.update_log("Image context selection canceled.")
+            self.visualizer.cancel_processing(reason="image selection canceled")
+            return
+
+        use_proxy_for_request = use_proxy_search or (image_png_bytes is not None)
+        provider_name = "Antigravity Proxy" if use_proxy_for_request else "Groq Compound"
+        logger.info(
+            "Starting Quick Answer search (Provider: %s, Refiner: %s, SelectedContext: no, ImageContext: yes)...",
+            provider_name,
+            refinement_model_id,
+        )
+        self.worker = SearchWorker(
+            self.groq,
+            None,
+            refinement_model_id=refinement_model_id,
+            search_client=self.search_client if use_proxy_for_request else None,
+            query_text=query_text,
+            image_png_bytes=image_png_bytes,
+        )
+        self.worker.progress.connect(self._search_progress_signal.emit)
+        self.worker.stream_text.connect(self._on_search_stream_text)
+        self.worker.finished.connect(self.on_search_complete)
+        self.worker.error.connect(self.show_error)
+        self.worker.start()
+
     def on_transcription_complete(self, raw: str, final: str) -> None:
         self.window.update_log("Transcription complete")
         self.paste_text(final)
 
     def on_search_complete(self, answer: str) -> None:
-        self.window.update_log(f"Answer: {answer}")
-        self.paste_text(answer)
+        cleaned_answer = (answer or "").strip() or "No answer available."
+        self.window.update_log(f"Answer: {cleaned_answer}")
+        trace_widget_event(
+            "widget_answer_ready",
+            trigger="controller.on_search_complete",
+            reason="search pipeline returned final answer",
+            answer_preview=cleaned_answer[:120],
+        )
+        if self._search_stream_started:
+            self.visualizer.complete_streaming_answer(
+                cleaned_answer,
+                reason="search pipeline completed after streaming",
+            )
+        else:
+            self.visualizer.show_answer(
+                cleaned_answer,
+                reason="search pipeline completed",
+            )
+        self._search_stream_started = False
 
 
+
+    def _snapshot_clipboard_payload(self) -> dict[str, bytes]:
+        """Capture clipboard MIME payload so we can restore exactly after paste."""
+        try:
+            clipboard = self.app.clipboard()
+            mime = clipboard.mimeData()
+            if mime is None:
+                return {}
+            payload: dict[str, bytes] = {}
+            for fmt in mime.formats():
+                payload[str(fmt)] = bytes(mime.data(fmt))
+            return payload
+        except Exception as exc:
+            logger.debug("Clipboard snapshot skipped: %s", exc)
+            return {}
+
+    @staticmethod
+    def _win32_alloc_hglobal(data: bytes) -> int:
+        """Allocate and populate an HGLOBAL block for SetClipboardData."""
+        gmem_moveable = 0x0002
+        gmem_zeroinit = 0x0040
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.restype = ctypes.c_int
+        kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalFree.restype = ctypes.c_void_p
+
+        handle = kernel32.GlobalAlloc(gmem_moveable | gmem_zeroinit, max(1, len(data)))
+        if not handle:
+            return 0
+
+        locked = kernel32.GlobalLock(handle)
+        if not locked:
+            kernel32.GlobalFree(handle)
+            return 0
+        try:
+            ctypes.memmove(locked, data, len(data))
+        finally:
+            kernel32.GlobalUnlock(handle)
+        return int(handle)
+
+    def _set_clipboard_text_win32(self, text: str, exclude_history: bool = True) -> bool:
+        """Write clipboard text via Win32 so we can mark it as excluded from history."""
+        if sys.platform != "win32":
+            return False
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        cf_unicodetext = 13
+        user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+        user32.OpenClipboard.restype = ctypes.c_int
+        user32.EmptyClipboard.argtypes = []
+        user32.EmptyClipboard.restype = ctypes.c_int
+        user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+        user32.RegisterClipboardFormatW.argtypes = [ctypes.c_wchar_p]
+        user32.RegisterClipboardFormatW.restype = ctypes.c_uint
+        user32.CloseClipboard.argtypes = []
+        user32.CloseClipboard.restype = ctypes.c_int
+        kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalFree.restype = ctypes.c_void_p
+        if hasattr(kernel32, "GetLastError"):
+            kernel32.GetLastError.argtypes = []
+            kernel32.GetLastError.restype = ctypes.c_uint
+
+        opened = False
+        for _ in range(60):
+            if user32.OpenClipboard(None):
+                opened = True
+                break
+            time.sleep(0.01)
+        if not opened:
+            last_err = int(kernel32.GetLastError()) if hasattr(kernel32, "GetLastError") else 0
+            logger.debug("Win32 clipboard write failed: OpenClipboard timed out (GetLastError=%s)", last_err)
+            return False
+
+        try:
+            if not user32.EmptyClipboard():
+                last_err = int(kernel32.GetLastError()) if hasattr(kernel32, "GetLastError") else 0
+                logger.debug("Win32 clipboard write failed: EmptyClipboard failed (GetLastError=%s)", last_err)
+                return False
+
+            encoded = str(text or "").encode("utf-16-le") + b"\x00\x00"
+            text_handle = self._win32_alloc_hglobal(encoded)
+            if not text_handle:
+                logger.debug("Win32 clipboard write failed: GlobalAlloc for CF_UNICODETEXT returned null")
+                return False
+            if not user32.SetClipboardData(cf_unicodetext, text_handle):
+                kernel32.GlobalFree(text_handle)
+                last_err = int(kernel32.GetLastError()) if hasattr(kernel32, "GetLastError") else 0
+                logger.debug("Win32 clipboard write failed: SetClipboardData(CF_UNICODETEXT) failed (GetLastError=%s)", last_err)
+                return False
+
+            if exclude_history:
+                # Microsoft-documented formats for clipboard history/cloud behavior.
+                flags: list[tuple[str, int]] = [
+                    ("ExcludeClipboardContentFromMonitorProcessing", 1),
+                    ("CanIncludeInClipboardHistory", 0),
+                    ("CanUploadToCloudClipboard", 0),
+                ]
+                for format_name, value in flags:
+                    fmt = user32.RegisterClipboardFormatW(format_name)
+                    if not fmt:
+                        continue
+                    value_handle = self._win32_alloc_hglobal(int(value).to_bytes(4, "little", signed=False))
+                    if not value_handle:
+                        continue
+                    if not user32.SetClipboardData(fmt, value_handle):
+                        kernel32.GlobalFree(value_handle)
+            return True
+        except Exception as exc:
+            logger.debug("Win32 clipboard write failed: %s", exc)
+            return False
+        finally:
+            user32.CloseClipboard()
+
+    def _set_clipboard_text(self, text: str) -> bool:
+        cleaned = str(text or "")
+        if sys.platform == "win32":
+            # On Windows, keep staging history-safe only. If Win32 staging fails,
+            # fail the paste instead of leaking staged text into Win+V history.
+            return self._set_clipboard_text_win32(cleaned, exclude_history=True)
+
+        if self._set_clipboard_text_win32(cleaned, exclude_history=True):
+            return True
+
+        try:
+            self.app.clipboard().setText(cleaned)
+            return True
+        except Exception as exc:
+            logger.debug("Qt clipboard setText failed: %s", exc)
+
+        try:
+            pyperclip.copy(cleaned)
+            return True
+        except Exception as exc:
+            logger.debug("pyperclip fallback setText failed: %s", exc)
+            return False
+
+    def _restore_clipboard_payload(self, payload: dict[str, bytes], fallback_text: str = "") -> bool:
+        # Try lossless MIME restore first.
+        try:
+            clipboard = self.app.clipboard()
+            if payload:
+                mime = QMimeData()
+                for fmt, data in payload.items():
+                    mime.setData(str(fmt), QByteArray(data))
+                clipboard.setMimeData(mime)
+                return True
+        except Exception as exc:
+            logger.debug("Clipboard restore failed: %s", exc)
+        # Fallback to restoring plain text (still excluded from history on Win32 path).
+        try:
+            if self._set_clipboard_text_win32(str(fallback_text or ""), exclude_history=True):
+                return True
+        except Exception:
+            pass
+        try:
+            clipboard = self.app.clipboard()
+            if fallback_text:
+                clipboard.setText(str(fallback_text))
+            else:
+                clipboard.clear()
+            return True
+        except Exception:
+            pass
+        try:
+            pyperclip.copy(str(fallback_text or ""))
+            return True
+        except Exception:
+            return False
+
+    def _schedule_clipboard_restore(
+        self,
+        payload: dict[str, bytes],
+        fallback_text: str = "",
+        initial_delay_ms: int = 550,
+    ) -> None:
+        delays_ms = [max(40, int(initial_delay_ms)), 250, 250]
+
+        def _attempt(index: int = 0) -> None:
+            if self._restore_clipboard_payload(payload, fallback_text=fallback_text):
+                logger.debug("Clipboard restored after ghost paste")
+                return
+            next_index = index + 1
+            if next_index >= len(delays_ms):
+                logger.debug("Clipboard restore skipped after retries")
+                return
+            QTimer.singleShot(delays_ms[next_index], lambda idx=next_index: _attempt(idx))
+
+        QTimer.singleShot(delays_ms[0], lambda: _attempt(0))
 
     def paste_text(self, text: str) -> None:
         """Ghost paste: backup clipboard, paste text, restore original clipboard."""
-        # Transition out of processing immediately when transcription is ready.
-        # Clipboard operations can occasionally block, and should not delay UI state.
-        self._paste_completed_signal.emit()
+        cleaned_text = str(text or "").strip()
+        if not cleaned_text:
+            # Nothing to paste — surface failure so the visualizer exits processing state.
+            self._paste_failed_signal.emit()
+            return
 
-        def _smart_paste():
-            original_clipboard = None
+        # Clipboard path: temporary clipboard + Ctrl+V, then restore original clipboard.
+        clipboard_payload = self._snapshot_clipboard_payload()
+        try:
+            clipboard_text_fallback = str(self.app.clipboard().text() or "")
+        except Exception:
             try:
-                # 1. Backup current clipboard
-                try:
-                    original_clipboard = pyperclip.paste()
-                except Exception:
-                    original_clipboard = None
+                clipboard_text_fallback = str(pyperclip.paste() or "")
+            except Exception:
+                clipboard_text_fallback = ""
 
-                # 2. Copy transcription and paste
-                pyperclip.copy(text.strip())
-                time.sleep(0.05)  # Brief settle time
-                keyboard.send('ctrl+v')
+        try:
+            if not self._set_clipboard_text(cleaned_text):
+                raise RuntimeError("Unable to stage transcription text in clipboard")
+            time.sleep(0.06)
+            keyboard.send('ctrl+v')
+        except Exception as exc:
+            logger.error("Clipboard paste failed: %s", exc)
+            self._schedule_clipboard_restore(
+                clipboard_payload,
+                fallback_text=clipboard_text_fallback,
+                initial_delay_ms=60,
+            )
+            self._paste_failed_signal.emit()
+            return
 
-            except Exception as e:
-                logger.error(f"Smart paste failed: {e}")
-                self._paste_failed_signal.emit()
-                return
-
-            # 3. Restore original clipboard after delay (best-effort, non-blocking for UI transitions)
-            if original_clipboard is not None:
-                try:
-                    time.sleep(0.5)  # Wait for paste to complete
-                    pyperclip.copy(original_clipboard)
-                    logger.debug("Clipboard restored to original content")
-                except Exception as e:
-                    logger.debug(f"Clipboard restore skipped: {e}")
-
-        # Run in background thread to avoid blocking
-        threading.Thread(target=_smart_paste, daemon=True).start()
+        # Emit completion only after ctrl+v has been dispatched successfully.
+        self._paste_completed_signal.emit()
+        self._schedule_clipboard_restore(
+            clipboard_payload,
+            fallback_text=clipboard_text_fallback,
+            initial_delay_ms=550,
+        )
 
     def _on_paste_completed(self) -> None:
-        self.visualizer.play_completion_and_hide()
+        trace_widget_event(
+            "widget_completion_signal",
+            trigger="controller._on_paste_completed",
+            reason="paste pipeline completed successfully",
+        )
+        self.visualizer.play_completion_and_hide(reason="paste completed")
 
     def _on_paste_failed(self) -> None:
-        self.visualizer.cancel_processing()
+        trace_widget_event(
+            "widget_completion_signal",
+            trigger="controller._on_paste_failed",
+            reason="paste pipeline failed",
+        )
+        self.visualizer.cancel_processing(reason="paste failed")
 
     def show_error(self, msg: str) -> None:
         self.window.update_log(f"Error: {msg}")
-        self.visualizer.cancel_processing()
+        self._search_stream_started = False
+        trace_widget_event(
+            "widget_error",
+            trigger="controller.show_error",
+            reason="error surfaced to UI",
+            message=str(msg)[:180],
+        )
+        self.visualizer.cancel_processing(reason=f"error: {str(msg)[:120]}")
         # Also show a tray notification so the user sees it even if window is hidden
         if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
             self.tray_icon.showMessage(
@@ -506,9 +1023,23 @@ class WhisperAppController(QObject):
         if self.recorder.is_recording:
             self.recorder.stop_recording()
 
+        # Stop and join any active worker thread before tearing down the event loop.
+        if self.worker is not None:
+            try:
+                self.worker.quit()
+                if not self.worker.wait(3000):  # up to 3 s
+                    logger.warning("Worker thread did not exit cleanly; terminating.")
+                    self.worker.terminate()
+                    self.worker.wait(1000)
+            except Exception as exc:
+                logger.debug("Error stopping worker on quit: %s", exc)
+            finally:
+                self.worker = None
+
         # Stop hotkey listener
         self.hotkey_mgr.stop_listening()
         self.search_hotkey.stop_listening()
+        self.image_search_hotkey.stop_listening()
 
         # Hide tray icon
         self.tray_icon.hide()

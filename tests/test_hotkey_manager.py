@@ -53,3 +53,23 @@ def test_update_hotkey(mock_keyboard):
     
     assert mgr.modifiers == ['alt']
     assert mgr.trigger_key == 'b'
+
+def test_forbidden_keys_block_activation(mock_keyboard):
+    on_start = MagicMock()
+    mgr = HotkeyManager(
+        modifiers=['ctrl'],
+        trigger_key='win',
+        on_start=on_start,
+        forbidden_keys=['shift'],
+    )
+
+    def fake_is_pressed(key_name):
+        return key_name in {'ctrl', 'left windows', 'shift'}
+
+    mock_keyboard.is_pressed.side_effect = fake_is_pressed
+    mgr.is_listening = True
+    fake_event = MagicMock()
+    fake_event.name = 'left windows'
+    mgr._on_key_press(fake_event)
+
+    on_start.assert_not_called()

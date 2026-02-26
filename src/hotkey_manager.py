@@ -1,5 +1,7 @@
 import keyboard
 import logging
+import threading
+import time
 
 class HotkeyManager:
     """
@@ -7,7 +9,16 @@ class HotkeyManager:
     Uses a polling approach to reliably detect when keys are released,
     since Windows key release events can be inconsistent.
     """
-    def __init__(self, modifiers=None, trigger_key='win', on_start=None, on_stop=None, callback=None):
+    def __init__(
+        self,
+        modifiers=None,
+        trigger_key='win',
+        on_start=None,
+        on_stop=None,
+        callback=None,
+        forbidden_keys=None,
+        activation_delay_ms: int = 0,
+    ):
         """
         Args:
             modifiers: List of modifier keys that must be held (default: ['ctrl'])
@@ -25,6 +36,12 @@ class HotkeyManager:
         self.is_active = False  # Track if hotkey is currently held
         self._press_hook = None
         self._poll_timer = None
+        self._activation_pending = False
+        self.forbidden_keys = list(forbidden_keys or [])
+        try:
+            self.activation_delay_ms = max(0, int(activation_delay_ms))
+        except Exception:
+            self.activation_delay_ms = 0
         
         # All possible names for the Windows key
         self._win_key_names = ['win', 'windows', 'left windows', 'right windows', 'cmd', 'super']
@@ -45,6 +62,16 @@ class HotkeyManager:
                 return False
         return True
 
+    def _check_forbidden(self):
+        """Check that forbidden keys are NOT currently pressed."""
+        for key_name in self.forbidden_keys:
+            try:
+                if keyboard.is_pressed(key_name):
+                    return False
+            except Exception:
+                continue
+        return True
+
     def _is_trigger_key(self, event_name):
         """Check if the event is for the trigger key."""
         name_lower = event_name.lower()
@@ -56,28 +83,50 @@ class HotkeyManager:
     def _on_key_press(self, event):
         """Handle key press event."""
         if self._is_trigger_key(event.name):
-            if self._check_modifiers() and not self.is_active:
-                self.is_active = True
-                logging.info(f"Hotkey activated: Ctrl+Win held")
-                if self.on_start:
-                    self.on_start()
-                elif self.callback:
-                    self.callback()
-                # Start polling for release
-                self._start_release_polling()
+            if self._check_modifiers() and self._check_forbidden() and not self.is_active and not self._activation_pending:
+                if self.activation_delay_ms <= 0:
+                    self._activate_hotkey()
+                    return
+
+                self._activation_pending = True
+
+                def delayed_activation():
+                    time.sleep(self.activation_delay_ms / 1000.0)
+                    if not self.is_listening or self.is_active:
+                        self._activation_pending = False
+                        return
+                    if self._is_trigger_pressed() and self._check_modifiers() and self._check_forbidden():
+                        self._activate_hotkey()
+                    else:
+                        self._activation_pending = False
+
+                threading.Thread(target=delayed_activation, daemon=True).start()
+
+    def _activate_hotkey(self):
+        """Activate hotkey and emit start callback once."""
+        if self.is_active:
+            return
+        self.is_active = True
+        self._activation_pending = False
+        hotkey_str = f"{'+'.join(self.modifiers)}+{self.trigger_key}"
+        logging.info("Hotkey activated: %s held", hotkey_str)
+        if self.on_start:
+            self.on_start()
+        elif self.callback:
+            self.callback()
+        self._start_release_polling()
 
     def _start_release_polling(self):
         """Start polling to detect when keys are released."""
-        import threading
-        
+
         def poll_loop():
-            import time
             while self.is_active and self.is_listening:
                 time.sleep(0.05)  # Poll every 50ms
                 # Check if EITHER the trigger OR modifiers are released
-                if not self._is_trigger_pressed() or not self._check_modifiers():
+                if not self._is_trigger_pressed() or not self._check_modifiers() or not self._check_forbidden():
                     if self.is_active:  # Double-check still active
                         self.is_active = False
+                        self._activation_pending = False
                         logging.info(f"Hotkey released: stopping recording")
                         if self.on_stop:
                             self.on_stop()
@@ -108,6 +157,7 @@ class HotkeyManager:
                     self._press_hook = None
                 self.is_listening = False
                 self.is_active = False
+                self._activation_pending = False
             except Exception as e:
                 logging.error(f"Failed to unregister hotkey: {e}")
 
