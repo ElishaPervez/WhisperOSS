@@ -44,3 +44,7 @@ gha-creds-*.json
 **/antigravity*/
 
 personal run.bat
+test_proxy.py
+proxy_guide.md
+changes.txt
+Agents.md
