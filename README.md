@@ -8,7 +8,8 @@ A blazing fast, AI-powered voice typing application for Windows that feels nativ
 - **Ghost Paste**: Intelligently preserves your clipboard while typing into any application.
 - **Context Awareness**: Detects the active window (e.g., VS Code vs. Slack) to adjust formatting automatically.
 - **Smart Formatting**: 
-  - **Styles**: Choose between Casual, Professional Email, Google Docs, or Default.
+  - **Style**: Single `Default` formatter for consistent output.
+  - **Math Cleanup**: Auto-normalizes dictated math (exponents, brackets, equality cleanup, operator symbols).
   - **Symbols**: Auto-converts "squared" -> ², "degrees" -> °, etc.
 - **Visualizer**: Beautiful, native Windows-style audio visualizer that follows your cursor.
 - **Global Hotkeys**: Hold `Ctrl + Win` (or customize) to record from anywhere.

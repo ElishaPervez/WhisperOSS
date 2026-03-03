@@ -605,7 +605,7 @@ class WhisperAppController(QObject):
             # Standard Transcription Mode
             use_trans = self.config.get("translation_enabled")
             target_lang = self.config.get("target_language")
-            fmt_style = self.config.get("formatting_style", "Default")
+            fmt_style = "Default"
 
             # Get active window context for context intelligence
             active_context = get_active_window_title()

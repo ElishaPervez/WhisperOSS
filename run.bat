@@ -21,17 +21,20 @@ if not exist "%VENV_PY%" (
     exit /b 1
 )
 
-if /i "%~1"=="--background" (
-    if not exist "%VENV_PYW%" (
-        echo [ERROR] Background mode requires:
-        echo   "%VENV_PYW%"
-        pause
-        exit /b 1
-    )
-    start "" "%VENV_PYW%" "%ROOT%src\main.py"
-    exit /b 0
-)
+if /i "%~1"=="--foreground" goto :foreground
+if /i "%~1"=="--background" goto :background
+if "%~1"=="" goto :background
+goto :foreground
 
+:background
+if not exist "%VENV_PYW%" (
+    echo [WARN] pythonw.exe not found in venv, using foreground mode.
+    goto :foreground
+)
+start "" "%VENV_PYW%" "%ROOT%src\main.py"
+exit /b 0
+
+:foreground
 echo Starting WhisperOSS...
 "%VENV_PY%" "%ROOT%src\main.py"
 set "EXIT_CODE=%ERRORLEVEL%"

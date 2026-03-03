@@ -21,9 +21,8 @@ DEFAULT_CONFIG = {
     # "transcription_model" removed — TranscriptionWorker uses whisper-large-v3 directly.
     # Add back here and wire to TranscriptionWorker if model selection is needed in future.
     "formatter_model": "openai/gpt-oss-120b",  # Default fast/smart model
-    # formatting_style selects the LLM formatter prompt (Default/Casual/Email/Google Docs).
-    # The value is read by the controller and forwarded to TranscriptionWorker.
-    # There is currently no UI control to change it; it always falls back to "Default".
+    # Single formatter style mode:
+    # retained for backward-compatibility with older configs; only "Default" is used.
     "formatting_style": "Default",
     # Quick-answer web search provider. Default stays Groq for out-of-box usability.
     "use_antigravity_proxy_search": False,

@@ -4,6 +4,7 @@ import io
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.groq_client import GroqClient
+from src.math_formatting import normalize_math_dictation
 from src.proxy_search_client import ProxySearchClient
 
 # Configure logger
@@ -76,6 +77,7 @@ class TranscriptionWorker(QThread):
                         )
                     logger.info(f"Using Formatter Prompt for style: {self.formatting_style}, context: {self.active_context or 'None'}")
                     formatted = self.groq_client.format_text(raw_text, self.format_model, system_prompt=prompt)
+                    formatted = normalize_math_dictation(formatted)
 
                 final_text = formatted
 

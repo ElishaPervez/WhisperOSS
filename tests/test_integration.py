@@ -284,11 +284,11 @@ class TestIntegration(unittest.TestCase):
         error_signal.assert_not_called()
         print("Search Pipeline Pre-Transcribed Query: PASS")
 
-    def test_formatting_style_flows_from_worker_to_prompt(self):
-        """TranscriptionWorker must pass formatting_style to get_formatter_prompt."""
-        print("\nRunning Formatting Style → Prompt Flow Test...")
+    def test_formatter_always_uses_default_prompt(self):
+        """TranscriptionWorker should always use the default formatter prompt."""
+        print("\nRunning Formatter Default Prompt Test...")
 
-        from src.prompts import SYSTEM_PROMPT_EMAIL
+        from src.prompts import SYSTEM_PROMPT_DEFAULT
 
         self.mock_groq.transcribe.return_value = "please send the report by friday"
         self.mock_groq.format_text.return_value = "Please send the report by Friday."
@@ -312,13 +312,13 @@ class TestIntegration(unittest.TestCase):
         error_signal.assert_not_called()
         finished_signal.assert_called_once()
 
-        # The system prompt passed to format_text must be the Email prompt.
+        # The system prompt passed to format_text must be the default prompt.
         _, kwargs = self.mock_groq.format_text.call_args
         used_prompt = kwargs.get("system_prompt") or self.mock_groq.format_text.call_args[0][2]
-        assert "email" in used_prompt.lower() or "professional" in used_prompt.lower(), (
-            f"Expected Email prompt, got: {used_prompt[:80]!r}"
+        assert used_prompt.strip() == SYSTEM_PROMPT_DEFAULT.strip(), (
+            f"Expected default prompt, got: {used_prompt[:80]!r}"
         )
-        print("Formatting Style → Prompt Flow: PASS")
+        print("Formatter Default Prompt: PASS")
 
 
 if __name__ == "__main__":

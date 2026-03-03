@@ -6,9 +6,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QScrollArea,
     QFrame,
-    QGraphicsOpacityEffect,
 )
-from PyQt6.QtCore import Qt, QTimer, QRect, QEasingCurve, QPropertyAnimation
+from PyQt6.QtCore import Qt, QTimer, QRect, QEasingCurve, QPropertyAnimation, pyqtProperty
 from PyQt6.QtGui import (
     QPainter,
     QColor,
@@ -18,6 +17,7 @@ from PyQt6.QtGui import (
     QLinearGradient,
     QRadialGradient,
     QTextDocument,
+    QPalette,
 )
 from typing import Optional
 import math
@@ -426,6 +426,7 @@ class AudioVisualizer(QWidget):
     STREAM_COMPLETION_TARGET_MS = 3000.0
     STREAM_MIN_WORD_STEP_MS = 4.0
     STREAM_TEXT_FADE_MIN_OPACITY = 0.70
+    ANSWER_TEXT_BASE_ALPHA = 246
 
     def __init__(self, animation_fps: int = 100):
         super().__init__()
@@ -461,6 +462,7 @@ class AudioVisualizer(QWidget):
         self._stream_realtime_enabled = True
         self._stream_reveal_wps = self._normalize_stream_reveal_wps(self.STREAM_DEFAULT_REVEAL_WPS)
         self._stream_catch_up_enabled = True
+        self._answer_text_opacity_value = -1.0
 
         # Frame-driven transform animation so motion cadence follows configured FPS.
         self._transition_timer = QTimer(self)
@@ -526,11 +528,7 @@ class AudioVisualizer(QWidget):
         self._answer_label.setTextFormat(Qt.TextFormat.MarkdownText)
         self._answer_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._answer_label.setMinimumWidth(1)
-        self._answer_text_opacity = QGraphicsOpacityEffect(self._answer_label)
-        self._answer_text_opacity.setOpacity(1.0)
-        self._answer_label.setGraphicsEffect(self._answer_text_opacity)
-
-        self._answer_text_fade_anim = QPropertyAnimation(self._answer_text_opacity, b"opacity", self)
+        self._answer_text_fade_anim = QPropertyAnimation(self, b"answer_text_opacity", self)
         self._answer_text_fade_anim.setDuration(int(self.STREAM_WORD_FADE_MS))
         self._answer_text_fade_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -591,7 +589,6 @@ class AudioVisualizer(QWidget):
                 border: none;
             }
             QLabel#AnswerBody {
-                color: rgba(248, 249, 251, 246);
                 font-size: 13px;
                 font-weight: 500;
                 line-height: 1.32;
@@ -631,6 +628,26 @@ class AudioVisualizer(QWidget):
             }
             """
         )
+        self._set_answer_text_opacity(1.0)
+
+    def _get_answer_text_opacity(self) -> float:
+        return float(self._answer_text_opacity_value)
+
+    def _set_answer_text_opacity_property(self, opacity: float):
+        clamped = max(0.0, min(1.0, float(opacity)))
+        if abs(clamped - float(self._answer_text_opacity_value)) < 0.0001:
+            return
+        self._answer_text_opacity_value = clamped
+        alpha = int(round(float(self.ANSWER_TEXT_BASE_ALPHA) * clamped))
+        alpha = max(0, min(255, alpha))
+        palette = self._answer_label.palette()
+        text_color = QColor(248, 249, 251, alpha)
+        palette.setColor(QPalette.ColorRole.WindowText, text_color)
+        palette.setColor(QPalette.ColorRole.Text, text_color)
+        self._answer_label.setPalette(palette)
+        self._answer_label.update()
+
+    answer_text_opacity = pyqtProperty(float, _get_answer_text_opacity, _set_answer_text_opacity_property)
 
     def _on_answer_scroll_slider_pressed(self):
         if not self._answer_visible:
@@ -662,16 +679,16 @@ class AudioVisualizer(QWidget):
 
     def _set_answer_text_opacity(self, opacity: float):
         self._answer_text_fade_anim.stop()
-        self._answer_text_opacity.setOpacity(max(0.0, min(1.0, float(opacity))))
+        self.answer_text_opacity = max(0.0, min(1.0, float(opacity)))
 
     def _trigger_streaming_text_fade(self, revealed_count: int):
         if revealed_count <= 0:
             return
-        current = float(self._answer_text_opacity.opacity())
+        current = float(self.answer_text_opacity)
         dip = min(0.22, 0.055 + (0.04 * float(revealed_count)))
         start_opacity = max(self.STREAM_TEXT_FADE_MIN_OPACITY, current - dip)
         self._answer_text_fade_anim.stop()
-        self._answer_text_opacity.setOpacity(start_opacity)
+        self.answer_text_opacity = start_opacity
         self._answer_text_fade_anim.setDuration(int(self.STREAM_WORD_FADE_MS))
         self._answer_text_fade_anim.setStartValue(start_opacity)
         self._answer_text_fade_anim.setEndValue(1.0)
