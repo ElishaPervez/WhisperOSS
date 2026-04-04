@@ -173,60 +173,60 @@ class SearchWorker(QThread):
                 self.error.emit("No speech detected.")
                 return
 
-            # Step 2: Refine Query
-            # Using the high-intelligence model (e.g. Llama 3 70B) to clean up the query
-            self._emit_progress("Refining query")
-            refinement_input = self._build_refinement_input(query_text, self.selected_text)
-            refined_query = self.groq_client.format_text(
-                refinement_input,
-                model_id=self.refinement_model_id,
-                system_prompt=SYSTEM_PROMPT_REFINE
+            # Step 2: Refine Query (skip when "insert X here" detected)
+            # The INSERT RESOLUTION prompt in the search step needs the raw
+            # sentence structure to replace placeholders inline.  Refinement
+            # would strip it, so we bypass it for insert-mode queries.
+            import re
+            has_insert_pattern = bool(
+                re.search(r'\binsert\b.+?\bhere\b', query_text, re.IGNORECASE)
             )
 
-            logger.info(
-                "Refined query (%s): '%s' -> '%s' [selected=%s image=%s]",
-                self.refinement_model_id,
-                query_text,
-                refined_query,
-                "yes" if self.selected_text else "no",
-                "yes" if self.image_png_bytes else "no",
-            )
-            search_input = self._build_search_input(refined_query, self.selected_text)
+            if has_insert_pattern:
+                logger.info(
+                    "Insert-resolution detected — skipping query refinement. raw='%s'",
+                    query_text,
+                )
+                search_input = query_text.strip()
+            else:
+                # Normal path: use the high-intelligence model to clean up the query
+                self._emit_progress("Refining query")
+                refinement_input = self._build_refinement_input(query_text, self.selected_text)
+                refined_query = self.groq_client.format_text(
+                    refinement_input,
+                    model_id=self.refinement_model_id,
+                    system_prompt=SYSTEM_PROMPT_REFINE
+                )
+
+                logger.info(
+                    "Refined query (%s): '%s' -> '%s' [selected=%s image=%s]",
+                    self.refinement_model_id,
+                    query_text,
+                    refined_query,
+                    "yes" if self.selected_text else "no",
+                    "yes" if self.image_png_bytes else "no",
+                )
+                search_input = self._build_search_input(refined_query, self.selected_text)
 
             # Step 3: Search / Answer
-            # Prefer Antigravity proxy when enabled, but always keep Groq as fallback.
+            # Always use Antigravity proxy when a search_client is provided.
+            # No Groq fallback — proxy failure surfaces as an error.
             self._emit_progress("Sending API request")
             if self.search_client is not None:
-                try:
-                    proxy_kwargs: Dict[str, object] = {}
-                    if isinstance(self.search_client, ProxySearchClient):
-                        proxy_kwargs["step_callback"] = self._emit_progress
-                        proxy_kwargs["stream_callback"] = self._emit_stream_text
-                    if self.image_png_bytes:
-                        from src.prompts import SYSTEM_PROMPT_SEARCH_IMAGE
-                        answer = self.search_client.run_search(
-                            search_input,
-                            system_prompt=SYSTEM_PROMPT_SEARCH_IMAGE,
-                            image_bytes=self.image_png_bytes,
-                            **proxy_kwargs,
-                        )
-                    else:
-                        answer = self.search_client.run_search(search_input, **proxy_kwargs)
-                except Exception as proxy_exc:
-                    logger.warning(
-                        "Antigravity proxy search failed: %s",
-                        proxy_exc,
+                proxy_kwargs: Dict[str, object] = {}
+                if isinstance(self.search_client, ProxySearchClient):
+                    proxy_kwargs["step_callback"] = self._emit_progress
+                    proxy_kwargs["stream_callback"] = self._emit_stream_text
+                if self.image_png_bytes:
+                    from src.prompts import SYSTEM_PROMPT_SEARCH_IMAGE
+                    answer = self.search_client.run_search(
+                        search_input,
+                        system_prompt=SYSTEM_PROMPT_SEARCH_IMAGE,
+                        image_bytes=self.image_png_bytes,
+                        **proxy_kwargs,
                     )
-                    if self.image_png_bytes:
-                        # Image context cannot be forwarded to the Groq fallback; raising
-                        # here surfaces an explicit error rather than silently dropping the
-                        # image and returning a text-only answer.
-                        raise RuntimeError(
-                            f"Image search failed — proxy unavailable ({proxy_exc}). "
-                            "Image context cannot be sent to the Groq fallback provider."
-                        ) from proxy_exc
-                    self._emit_progress("Proxy unavailable, using fallback")
-                    answer = self.groq_client.run_search(search_input)
+                else:
+                    answer = self.search_client.run_search(search_input, **proxy_kwargs)
             else:
                 self._emit_progress("Searching knowledge base")
                 answer = self.groq_client.run_search(search_input)

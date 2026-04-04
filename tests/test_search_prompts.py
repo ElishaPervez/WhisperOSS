@@ -9,6 +9,8 @@ def test_search_prompt_has_case_routing_and_specialized_rule():
     assert "Do NOT search" in prompt
     assert "NO GENERIC SOLUTIONS" in prompt
     assert "specialized" in prompt.lower()
+    assert "INSERT RESOLUTION" in prompt
+    assert "insert" in prompt.lower() and "here" in prompt.lower()
 
 
 def test_search_image_prompt_has_case_routing_and_specialized_rule():

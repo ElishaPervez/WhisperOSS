@@ -201,9 +201,19 @@ def test_paste_text_uses_clipboard_paste_and_restore(app, mock_deps):
     )
     mock_deps["visualizer"].cancel_processing.assert_not_called()
 
-def test_start_transcription_search_passes_selected_text(app, mock_deps):
+def test_start_transcription_search_always_uses_proxy(app, mock_deps):
+    """Search mode must always pass search_client regardless of proxy toggle."""
     controller = WhisperAppController()
     controller.recording_mode = "search"
+
+    # Even when use_antigravity_proxy_search is False, proxy must be used
+    mock_deps["config"].get.side_effect = lambda key, default=None: {
+        "api_key": "test_key",
+        "input_device_index": 0,
+        "use_formatter": False,
+        "formatter_model": "test_model",
+        "use_antigravity_proxy_search": False,
+    }.get(key, default)
 
     with patch.object(controller, "_capture_selected_text", return_value="quixotic"), \
          patch("src.controller.SearchWorker") as mock_worker_cls:
@@ -212,6 +222,7 @@ def test_start_transcription_search_passes_selected_text(app, mock_deps):
 
     _, kwargs = mock_worker_cls.call_args
     assert kwargs["selected_text"] == "quixotic"
+    assert kwargs["search_client"] is controller.search_client
     mock_worker_inst.start.assert_called_once()
 
 def test_start_transcription_search_image_transcribes_before_capture(app, mock_deps):
@@ -234,7 +245,8 @@ def test_start_transcription_search_image_transcribes_before_capture(app, mock_d
     assert kwargs["format_model"] == "test_model"
     mock_worker_inst.start.assert_called_once()
 
-def test_start_transcription_search_image_requires_proxy_when_disabled(app, mock_deps):
+def test_start_transcription_search_image_always_uses_proxy(app, mock_deps):
+    """Image search always uses proxy — no proxy-required notice needed."""
     controller = WhisperAppController()
     controller.recording_mode = "search_image"
     mock_deps["config"].get.side_effect = lambda key, default=None: {
@@ -247,10 +259,14 @@ def test_start_transcription_search_image_requires_proxy_when_disabled(app, mock
 
     with patch.object(controller, "_show_proxy_required_notice") as mock_notice, \
          patch("src.controller.TranscriptionWorker") as mock_transcription_worker_cls:
+        mock_worker_inst = mock_transcription_worker_cls.return_value
         controller.start_transcription("dummy.wav")
 
-    mock_notice.assert_called_once()
-    mock_transcription_worker_cls.assert_not_called()
+    # Proxy required notice must NOT be shown — proxy is always enabled
+    mock_notice.assert_not_called()
+    # TranscriptionWorker should be created (first stage of image search)
+    mock_transcription_worker_cls.assert_called_once()
+    mock_worker_inst.start.assert_called_once()
 
 def test_continue_image_search_pipeline_passes_query_and_image(app, mock_deps):
     controller = WhisperAppController()

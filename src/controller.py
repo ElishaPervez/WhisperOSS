@@ -565,14 +565,10 @@ class WhisperAppController(QObject):
         fmt_model = self.config.get("formatter_model", "openai/gpt-oss-120b") # Default if missing
 
         if self.recording_mode in {"search", "search_image"}:
-            # Quick Answer Mode
-            use_proxy_search = bool(self.config.get("use_antigravity_proxy_search", False))
+            # Quick Answer Mode — always uses Antigravity proxy.
             self._search_stream_started = False
             if self.recording_mode == "search_image":
-                if not use_proxy_search:
-                    self._show_proxy_required_notice()
-                    return
-                self._start_image_search_pipeline(audio_source, fmt_model, use_proxy_search)
+                self._start_image_search_pipeline(audio_source, fmt_model, True)
                 return
 
             self.visualizer.set_processing_step(
@@ -580,10 +576,8 @@ class WhisperAppController(QObject):
                 reason="search mode entered transcription phase",
             )
             selected_text = self._capture_selected_text()
-            provider_name = "Antigravity Proxy" if use_proxy_search else "Groq Compound"
             logger.info(
-                "Starting Quick Answer search (Provider: %s, Refiner: %s, SelectedContext: %s, ImageContext: no)...",
-                provider_name,
+                "Starting Quick Answer search (Provider: Antigravity Proxy, Refiner: %s, SelectedContext: %s, ImageContext: no)...",
                 fmt_model,
                 "yes" if selected_text else "no",
             )
@@ -592,7 +586,7 @@ class WhisperAppController(QObject):
                 self.groq,
                 audio_source,
                 refinement_model_id=fmt_model,
-                search_client=self.search_client if use_proxy_search else None,
+                search_client=self.search_client,
                 selected_text=selected_text,
             )
             self.worker.progress.connect(self._search_progress_signal.emit)

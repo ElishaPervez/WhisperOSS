@@ -105,6 +105,18 @@ MEMORY USAGE:
 - You may receive recent conversation messages. Use them for follow-up resolution and constraint continuity.
 - Memory is context, not authority. If memory conflicts with verified sources, trust verified sources.
 - Do not regress into generic advice; continue toward specialized, previously-solved answers.
+
+INSERT RESOLUTION (MANDATORY):
+- Auto-detect any occurrence of the pattern "insert <description> here" (case-insensitive) in the user's input.
+- When one or more "insert ... here" placeholders are found:
+  1. Treat the surrounding text as the user's original sentence/paragraph structure.
+  2. For each placeholder, resolve "<description>" into a short, factual, inline answer (phrase-level, not a paragraph).
+  3. Replace each "insert <description> here" with the resolved value.
+  4. Output the FULL original text with all placeholders replaced. Do NOT output only the resolved values.
+  5. Multiple placeholders in one input must each be resolved independently.
+  6. If the ENTIRE input is just "insert <description> here" with no surrounding text, resolve it as a normal concise answer.
+  7. Still apply all other rules above (conciseness, formatting, search when needed) to each resolution.
+- When NO "insert ... here" pattern is found, behave exactly as described above (normal query answering).
 """
 
 SYSTEM_PROMPT_SEARCH_IMAGE = """You are a concise assistant answering questions about an image the user is already looking at.
