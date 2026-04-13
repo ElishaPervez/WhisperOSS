@@ -267,9 +267,6 @@ class WhisperAppController(QObject):
         self.search_hotkey.start_listening()
         self.image_search_hotkey.start_listening()
 
-        # Always open visible on startup instead of tray-only.
-        self.show_window()
-
     def on_config_changed(self, key: str, value: Any) -> None:
         if key == "api_key":
             new_key = str(value).strip()
@@ -308,6 +305,11 @@ class WhisperAppController(QObject):
             self.config.set("stream_catch_up_enabled", enabled)
             self.config.save()
             self.visualizer.set_stream_catch_up_enabled(enabled)
+        elif key == "format_provider":
+            self.config.set(key, value)
+            self.config.save()
+            if value == "proxy":
+                self.refresh_proxy_formatter_models()
         elif key in {
             "use_antigravity_proxy_search",
             "antigravity_proxy_url",
@@ -327,6 +329,9 @@ class WhisperAppController(QObject):
                 ),
                 thinking_level=self.config.get("antigravity_thinking_level", "high"),
             )
+            # Refresh proxy formatter models when proxy connection details change
+            if key in {"antigravity_proxy_url", "antigravity_api_key"}:
+                self.refresh_proxy_formatter_models()
 
     def refresh_models(self) -> None:
         # In a real app, do this async
@@ -339,6 +344,18 @@ class WhisperAppController(QObject):
                 self.window._set_connected_status("API Connected (No Models)")
         else:
             self.window._set_error_status("API Key Invalid / Missing")
+
+        # Also refresh proxy formatter models if proxy is configured
+        self.refresh_proxy_formatter_models()
+
+    def refresh_proxy_formatter_models(self) -> None:
+        """Fetch model list from Antigravity proxy and populate the UI."""
+        try:
+            models = self.search_client.list_models()
+            if models:
+                self.window.set_proxy_formatter_model_list(models)
+        except Exception as e:
+            logger.debug("Could not fetch proxy models: %s", e)
 
     def toggle_recording(self) -> None:
         # Toggle state - Defaults to standard transcription mode if toggled via UI
@@ -563,6 +580,8 @@ class WhisperAppController(QObject):
         # Get common config
         use_fmt = self.config.get("use_formatter")
         fmt_model = self.config.get("formatter_model", "openai/gpt-oss-120b") # Default if missing
+        format_provider = self.config.get("format_provider", "groq")
+        proxy_fmt_model = self.config.get("proxy_formatter_model", "")
 
         if self.recording_mode in {"search", "search_image"}:
             # Quick Answer Mode — always uses Antigravity proxy.
@@ -599,17 +618,28 @@ class WhisperAppController(QObject):
             # Standard Transcription Mode
             use_trans = self.config.get("translation_enabled")
             target_lang = self.config.get("target_language")
-            fmt_style = "Default"
+            casual_mode = self.config.get("casual_mode", False)
+            fmt_style = "Casual" if casual_mode else "Default"
 
             # Get active window context for context intelligence
             active_context = get_active_window_title()
 
-            logger.info(f"Starting transcription: fmt={use_fmt}, trans={use_trans}, lang={target_lang}, style={fmt_style}, context={active_context}")
+            # Determine formatting backend
+            proxy_format_client = None
+            if use_fmt and format_provider == "proxy":
+                proxy_format_client = self.search_client
+
+            logger.info(
+                "Starting transcription: fmt=%s, provider=%s, trans=%s, lang=%s, style=%s, context=%s",
+                use_fmt, format_provider, use_trans, target_lang, fmt_style, active_context,
+            )
 
             self.worker = TranscriptionWorker(
                 self.groq, audio_source, use_fmt, fmt_model,
                 use_translation=use_trans, target_language=target_lang,
-                formatting_style=fmt_style, active_context=active_context
+                formatting_style=fmt_style, active_context=active_context,
+                proxy_format_client=proxy_format_client,
+                proxy_format_model=proxy_fmt_model,
             )
             self.worker.finished.connect(self.on_transcription_complete)
             self.worker.error.connect(self.show_error)

@@ -315,7 +315,6 @@ def test_streaming_answer_realtime_mode_tracks_arrived_text_immediately(app, qtb
 
     assert vis._answer_label.text() == partial
 
-
 def test_stream_reveal_wps_clamps_to_supported_range(app, qtbot):
     vis = AudioVisualizer()
     qtbot.addWidget(vis)

@@ -116,6 +116,46 @@ class ProxySearchClient:
         }
         return mapping.get(level, 24576)
 
+    def list_models(self) -> List[str]:
+        """Fetch available model IDs from the proxy via OpenAI-compatible endpoint."""
+        client = self._get_openai_client()
+        if client is None:
+            return []
+        try:
+            models = client.models.list()
+            return sorted(m.id for m in models.data if m.id)
+        except Exception as exc:
+            logger.warning("Failed to list proxy models: %s", exc)
+            return []
+
+    def format_text(
+        self,
+        raw_text: str,
+        model_id: str,
+        system_prompt: str,
+    ) -> str:
+        """Format text using the proxy's OpenAI-compatible chat completions."""
+        client = self._get_openai_client()
+        if client is None:
+            raise ProxySearchClientError("OpenAI SDK is required for proxy formatting.")
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": raw_text},
+        ]
+        params: Dict[str, Any] = {
+            "model": model_id.strip(),
+            "messages": messages,
+            "temperature": 0.3,
+            "stream": False,
+        }
+        try:
+            response = client.chat.completions.create(**params)
+            content = response.choices[0].message.content
+            return str(content) if content else ""
+        except Exception as exc:
+            raise ProxySearchClientError(f"Proxy formatting failed: {exc}") from exc
+
     def _get_openai_client(self):
         key = self.api_key or "sk-antigravity"
         signature = f"{self.openai_base_url}|{key}|{self.timeout_sec}"

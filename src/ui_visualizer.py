@@ -65,6 +65,8 @@ class CompactAudioVisualizer(QWidget):
         self.success_progress = 0.0
         self.processing_mix = 0.0  # 0=bars only, 1=loader only
         self.processing_text = ""
+        self._next_success_delay_frames = 0
+        self._success_delay_remaining = 0
         
         # Smooth animation timer
         self._animation_fps = 100
@@ -80,6 +82,9 @@ class CompactAudioVisualizer(QWidget):
     def set_animation_fps(self, fps: int):
         self._animation_fps = _normalize_animation_fps(fps, self._animation_fps)
         self.timer.setInterval(_interval_from_fps(self._animation_fps))
+
+    def set_next_success_start_delay_frames(self, frames: int):
+        self._next_success_delay_frames = max(0, int(frames))
 
     def set_mode(self, mode: str):
         """Switch animation mode for recording lifecycle transitions."""
@@ -107,14 +112,14 @@ class CompactAudioVisualizer(QWidget):
             # Processing UI is text-only; keep bars fully faded out.
             self.processing_mix = 1.0
         elif mode == "success":
-            # Start slightly progressed so the completion state is immediately
-            # distinguishable from the processing loader.
-            self.success_progress = 0.05
+            self._success_delay_remaining = int(self._next_success_delay_frames)
+            self._next_success_delay_frames = 0
+            self.success_progress = 0.0
             self.target_amplitude = 0.0
             self.is_active = False
             self.processing_text = ""
-            # Start from mostly loader-visible to morph into the checkmark.
-            self.processing_mix = max(self.processing_mix, 0.74)
+            # Keep the compact pill visually settled before the success sweep begins.
+            self.processing_mix = 1.0
 
     def set_processing_text(self, text: str):
         cleaned = " ".join(str(text or "").split()).strip()
@@ -184,6 +189,11 @@ class CompactAudioVisualizer(QWidget):
             return
 
         if self.mode == "success":
+            if self._success_delay_remaining > 0:
+                self._success_delay_remaining -= 1
+                self.update()
+                return
+
             # Morph the loader into a final checkmark state.
             self.processing_phase += 0.04
             # Run completion ~1.5x faster for a snappier finish.
@@ -1707,7 +1717,12 @@ class AudioVisualizer(QWidget):
             self.setGeometry(target_rect)
             self._sync_child_geometry()
 
-    def play_completion_and_hide(self, delay_ms: int = 1500, reason: str = ""):
+    def play_completion_and_hide(
+        self,
+        delay_ms: int = 1500,
+        reason: str = "",
+        success_delay_frames: int = 0,
+    ):
         self._trace_widget_event(
             "widget_completion",
             "AudioVisualizer.play_completion_and_hide",
@@ -1726,8 +1741,10 @@ class AudioVisualizer(QWidget):
             compact_rect = self._compact_rect_for_reference(current)
             self.setGeometry(compact_rect)
             self._sync_child_geometry()
+        self._visualizer.set_next_success_start_delay_frames(success_delay_frames)
         self._visualizer.set_mode("success")
-        self._hide_after_completion_timer.start(max(120, int(delay_ms)))
+        total_delay_ms = max(120, int(delay_ms)) + self._duration_for_frames(success_delay_frames)
+        self._hide_after_completion_timer.start(total_delay_ms)
 
     def cancel_processing(self, reason: str = ""):
         self._trace_widget_event(

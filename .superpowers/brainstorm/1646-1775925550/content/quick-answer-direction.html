@@ -1,0 +1,87 @@
+<h2>Which overlay direction feels right?</h2>
+<p class="subtitle">This is about the search/dictation widget while it moves through listening, sending, reasoning, answer, and completion.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Cinematic Pill</div>
+        <div class="mockup-body" style="padding:18px;background:linear-gradient(180deg,#07111d,#0f2032);color:#e6f4ff;border-radius:18px;min-height:220px;">
+          <div style="display:flex;justify-content:center;align-items:center;height:58px;">
+            <div style="width:240px;height:56px;border-radius:999px;background:linear-gradient(90deg,#0ea5e9,#38bdf8,#7dd3fc);box-shadow:0 14px 40px rgba(14,165,233,.35);display:flex;align-items:center;justify-content:center;font-weight:700;color:#062033;">Sending API Request</div>
+          </div>
+          <div style="margin-top:18px;display:flex;gap:10px;justify-content:center;">
+            <div style="width:46px;height:46px;border-radius:14px;background:#0b3550;"></div>
+            <div style="width:46px;height:46px;border-radius:14px;background:#124767;"></div>
+            <div style="width:46px;height:46px;border-radius:14px;background:#1b597f;"></div>
+          </div>
+          <div style="margin-top:18px;text-align:center;font-size:13px;opacity:.9;">Stays compact, but morphs dramatically between phases.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Cinematic Pill</h3>
+      <p>Small footprint near the bottom. Fancy transitions, but still unobtrusive.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Expanding Assistant Card</div>
+        <div class="mockup-body" style="padding:18px;background:linear-gradient(180deg,#0f172a,#152238);color:#eff6ff;border-radius:18px;min-height:220px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-weight:700;">Quick Answer</div>
+            <div style="font-size:12px;opacity:.75;">reasoning...</div>
+          </div>
+          <div style="height:12px;border-radius:999px;background:#16324d;overflow:hidden;">
+            <div style="width:68%;height:100%;background:linear-gradient(90deg,#38bdf8,#67e8f9);"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;">
+            <div style="border-radius:14px;background:#12263a;padding:12px;font-size:12px;">Transcribing speech</div>
+            <div style="border-radius:14px;background:#183047;padding:12px;font-size:12px;">Sending API request</div>
+            <div style="border-radius:14px;background:#1d3f5b;padding:12px;font-size:12px;">Reasoning blocks</div>
+            <div style="border-radius:14px;background:#24516f;padding:12px;font-size:12px;">Answer reveal</div>
+          </div>
+          <div style="margin-top:14px;border-radius:16px;background:#f8fafc;color:#0f172a;padding:14px;font-size:13px;">Paris is the capital of France.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Expanding Assistant Card</h3>
+      <p>Starts compact, then grows into a richer card with visible phases and answer reveal.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. Stage + Timeline Panel</div>
+        <div class="mockup-body" style="padding:18px;background:linear-gradient(180deg,#111827,#172554);color:#eff6ff;border-radius:18px;min-height:220px;">
+          <div style="display:grid;grid-template-columns:74px 1fr;gap:14px;height:100%;">
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div style="height:34px;border-radius:12px;background:#38bdf8;"></div>
+              <div style="height:34px;border-radius:12px;background:#334155;"></div>
+              <div style="height:34px;border-radius:12px;background:#334155;"></div>
+              <div style="height:34px;border-radius:12px;background:#334155;"></div>
+            </div>
+            <div>
+              <div style="font-weight:700;margin-bottom:8px;">Sending API Request</div>
+              <div style="border-radius:14px;background:#0f172a;padding:14px;margin-bottom:12px;font-size:12px;opacity:.86;">Each phase gets its own scene with a persistent timeline.</div>
+              <div style="border-radius:16px;background:#f8fafc;color:#0f172a;padding:16px;font-size:13px;min-height:76px;">Large, highly expressive state transitions with room for reasoning summaries and completion effects.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Stage + Timeline Panel</h3>
+      <p>Most explicit and premium-looking, but also the most visually dominant.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px;">
+  <div class="label">Question</div>
+  <p>Which direction is closest to what you want for quick-answer search and dictation/paste feedback?</p>
+</div>

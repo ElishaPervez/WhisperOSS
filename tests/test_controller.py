@@ -56,8 +56,8 @@ def test_controller_init(app, mock_deps):
     mock_deps["config"].get.assert_called()
     mock_deps["groq"].check_connection.assert_called() # refresh_models called
     mock_deps["recorder"].list_devices.assert_called()
-    # Controller launches with the main window visible.
-    mock_deps["window"].show.assert_called_once()
+    # Controller launches tray-first; main window stays hidden until restored.
+    mock_deps["window"].show.assert_not_called()
 
 def test_toggle_recording(app, mock_deps):
     controller = WhisperAppController()
@@ -367,10 +367,10 @@ def test_on_search_complete_non_stream_uses_paced_reveal_when_realtime_disabled(
     )
     mock_deps["visualizer"].show_answer.assert_not_called()
 
-def test_window_always_shown_on_startup(app, mock_deps):
-    """Main window must be shown unconditionally during init_state."""
+def test_window_starts_hidden_on_startup(app, mock_deps):
+    """Main window should stay hidden on startup so the app begins in the tray."""
     WhisperAppController()
-    mock_deps["window"].show.assert_called_once()
+    mock_deps["window"].show.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

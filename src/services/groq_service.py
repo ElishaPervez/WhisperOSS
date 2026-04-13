@@ -40,7 +40,9 @@ class TranscriptionWorker(QThread):
                  use_translation: bool = False,
                  target_language: str = "English",
                  formatting_style: str = "Default",
-                 active_context: str = ""):
+                 active_context: str = "",
+                 proxy_format_client=None,
+                 proxy_format_model: str = ""):
         super().__init__()
         self.groq_client = groq_client
         self.audio_file = audio_file
@@ -50,6 +52,19 @@ class TranscriptionWorker(QThread):
         self.target_language = target_language
         self.formatting_style = formatting_style
         self.active_context = active_context
+        self.proxy_format_client = proxy_format_client
+        self.proxy_format_model = proxy_format_model
+
+    def _format_text(self, raw_text: str, model_id: str, system_prompt: str) -> str:
+        """Route formatting through proxy or Groq based on configuration."""
+        if self.proxy_format_client is not None:
+            logger.info("Formatting via Antigravity Proxy (model=%s)", self.proxy_format_model or model_id)
+            return self.proxy_format_client.format_text(
+                raw_text,
+                model_id=self.proxy_format_model or model_id,
+                system_prompt=system_prompt,
+            )
+        return self.groq_client.format_text(raw_text, model_id, system_prompt=system_prompt)
 
     def run(self) -> None:
         try:
@@ -64,7 +79,7 @@ class TranscriptionWorker(QThread):
                     from src.prompts import SYSTEM_PROMPT_TRANSLATOR
                     prompt = SYSTEM_PROMPT_TRANSLATOR.format(language=self.target_language)
                     logger.info(f"Using Translator Prompt for language: {self.target_language}")
-                    formatted = self.groq_client.format_text(raw_text, self.format_model, system_prompt=prompt)
+                    formatted = self._format_text(raw_text, self.format_model, prompt)
                 else:
                     from src.prompts import get_formatter_prompt
                     prompt = get_formatter_prompt(self.formatting_style)
@@ -76,7 +91,7 @@ class TranscriptionWorker(QThread):
                             f"Active window title: \"{safe_context}\"."
                         )
                     logger.info(f"Using Formatter Prompt for style: {self.formatting_style}, context: {self.active_context or 'None'}")
-                    formatted = self.groq_client.format_text(raw_text, self.format_model, system_prompt=prompt)
+                    formatted = self._format_text(raw_text, self.format_model, prompt)
                     formatted = normalize_math_dictation(formatted)
 
                 final_text = formatted

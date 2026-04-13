@@ -1074,11 +1074,42 @@ class MainWindow(QWidget):
         formatter_row.addWidget(self.format_toggle)
         pipeline_layout.addLayout(formatter_row)
 
+        self.format_provider_label = QLabel("Format Provider")
+        pipeline_layout.addWidget(self.format_provider_label)
+        self.format_provider_combo = QComboBox()
+        self.format_provider_combo.addItems(["Groq", "Antigravity Proxy"])
+        self.format_provider_combo.currentTextChanged.connect(self.on_format_provider_changed)
+        pipeline_layout.addWidget(self.format_provider_combo)
+
         self.model_label = QLabel("Formatter Model")
         pipeline_layout.addWidget(self.model_label)
         self.model_combo = QComboBox()
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
         pipeline_layout.addWidget(self.model_combo)
+
+        # Editable combo for proxy formatter model (user can type any model ID)
+        self.proxy_formatter_model_label = QLabel("Proxy Formatter Model")
+        pipeline_layout.addWidget(self.proxy_formatter_model_label)
+        self.proxy_formatter_model_combo = QComboBox()
+        self.proxy_formatter_model_combo.setEditable(True)
+        self.proxy_formatter_model_combo.lineEdit().setPlaceholderText("e.g. gemini-3-pro-high")
+        self.proxy_formatter_model_combo.currentTextChanged.connect(self.on_proxy_formatter_model_changed)
+        pipeline_layout.addWidget(self.proxy_formatter_model_combo)
+
+        casual_row = QHBoxLayout()
+        casual_label = QLabel("Casual Mode")
+        self.casual_toggle = AnimatedToggle()
+        self.casual_toggle.setChecked(self.config.get("casual_mode", False))
+        self.casual_toggle.stateChanged.connect(self.on_casual_toggle_changed)
+        casual_row.addWidget(casual_label)
+        casual_row.addStretch()
+        casual_row.addWidget(self.casual_toggle)
+        pipeline_layout.addLayout(casual_row)
+
+        self.casual_hint = QLabel("Chat-style output with emoji conversion")
+        self.casual_hint.setObjectName("MutedText")
+        pipeline_layout.addWidget(self.casual_hint)
+
         pipeline_layout.addStretch()
 
         self.settings_tabs.addTab(pipeline_tab, "Pipeline")
@@ -1335,7 +1366,7 @@ class MainWindow(QWidget):
         self.animation_fps_combo.currentTextChanged.connect(self.on_animation_fps_changed)
         appearance_layout.addWidget(self.animation_fps_combo)
 
-        note = QLabel("Changes are saved immediately and apply to the next recording.")
+        note = QLabel("Controls visualizer and overlay animation smoothness. Applied immediately.")
         note.setObjectName("MutedText")
         note.setWordWrap(True)
         appearance_layout.addWidget(note)
@@ -1445,7 +1476,13 @@ class MainWindow(QWidget):
     def _persist_force_save_settings(self):
         self.config.set("input_device_index", self.device_combo.currentData())
         self.config.set("use_formatter", self.format_toggle.isChecked())
+        self.config.set(
+            "format_provider",
+            "proxy" if self.format_provider_combo.currentText() == "Antigravity Proxy" else "groq",
+        )
         self.config.set("formatter_model", self.model_combo.currentText().strip())
+        self.config.set("proxy_formatter_model", self.proxy_formatter_model_combo.currentText().strip())
+        self.config.set("casual_mode", self.casual_toggle.isChecked())
         self.config.set(
             "translation_enabled",
             self.translation_toggle.isChecked() and self.translation_toggle.isEnabled(),
@@ -1511,17 +1548,24 @@ class MainWindow(QWidget):
     def _refresh_pipeline_summary(self):
         use_formatter = self.format_toggle.isChecked()
         use_translation = self.translation_toggle.isChecked() and self.translation_toggle.isEnabled()
+        is_proxy = self.format_provider_combo.currentText() == "Antigravity Proxy"
+        is_casual = self.casual_toggle.isChecked()
 
         if not use_formatter:
             pipeline_text = "Raw Whisper"
             output_text = "Direct paste"
         elif use_translation:
             pipeline_text = "Format + Translate"
+            if is_proxy:
+                pipeline_text += " (Proxy)"
             lang = self.language_input.currentText().strip() or "Target language"
             output_text = f"{lang} output"
         else:
-            pipeline_text = "Format only"
-            output_text = "Polished text"
+            if is_casual:
+                pipeline_text = "Casual" + (" (Proxy)" if is_proxy else "")
+            else:
+                pipeline_text = "Proxy format" if is_proxy else "Format only"
+            output_text = "Chat-style text" if is_casual else "Polished text"
 
         self.pipeline_stat_value.setText(pipeline_text)
         self.output_stat_value.setText(output_text)
@@ -1596,8 +1640,26 @@ class MainWindow(QWidget):
 
         use_formatter = self.config.get("use_formatter", False)
         self.format_toggle.setChecked(use_formatter)
-        self.model_combo.setEnabled(use_formatter)
-        self.model_label.setEnabled(use_formatter)
+
+        format_provider = self.config.get("format_provider", "groq")
+        self.format_provider_combo.blockSignals(True)
+        self.format_provider_combo.setCurrentText(
+            "Antigravity Proxy" if format_provider == "proxy" else "Groq"
+        )
+        self.format_provider_combo.blockSignals(False)
+
+        proxy_fmt_model = self.config.get("proxy_formatter_model", "")
+        self.proxy_formatter_model_combo.blockSignals(True)
+        if proxy_fmt_model:
+            self.proxy_formatter_model_combo.setCurrentText(proxy_fmt_model)
+        self.proxy_formatter_model_combo.blockSignals(False)
+
+        casual_enabled = self.config.get("casual_mode", False)
+        self.casual_toggle.blockSignals(True)
+        self.casual_toggle.setChecked(casual_enabled)
+        self.casual_toggle.blockSignals(False)
+
+        self._update_formatter_controls_visibility()
 
         self.translation_toggle.setEnabled(use_formatter)
         translation_enabled = self.config.get("translation_enabled", False) and use_formatter
@@ -1800,8 +1862,7 @@ class MainWindow(QWidget):
         self.config.set("use_formatter", enabled)
         self.config.save()
 
-        self.model_combo.setEnabled(enabled)
-        self.model_label.setEnabled(enabled)
+        self._update_formatter_controls_visibility()
         self.translation_toggle.setEnabled(enabled)
 
         # Translation depends on formatter.
@@ -1818,6 +1879,49 @@ class MainWindow(QWidget):
             self.language_input.setEnabled(trans_enabled)
             self.language_label.setEnabled(trans_enabled)
 
+        self._refresh_pipeline_summary()
+
+    def _update_formatter_controls_visibility(self):
+        """Show/hide Groq vs Proxy model controls based on format provider."""
+        enabled = self.format_toggle.isChecked()
+        is_proxy = self.format_provider_combo.currentText() == "Antigravity Proxy"
+
+        self.format_provider_label.setEnabled(enabled)
+        self.format_provider_combo.setEnabled(enabled)
+
+        # Groq model controls
+        self.model_label.setVisible(enabled and not is_proxy)
+        self.model_combo.setVisible(enabled and not is_proxy)
+        self.model_label.setEnabled(enabled and not is_proxy)
+        self.model_combo.setEnabled(enabled and not is_proxy)
+
+        # Proxy model controls
+        self.proxy_formatter_model_label.setVisible(enabled and is_proxy)
+        self.proxy_formatter_model_combo.setVisible(enabled and is_proxy)
+        self.proxy_formatter_model_label.setEnabled(enabled and is_proxy)
+        self.proxy_formatter_model_combo.setEnabled(enabled and is_proxy)
+
+        # Casual mode controls
+        self.casual_toggle.setEnabled(enabled)
+        self.casual_hint.setEnabled(enabled)
+
+    def on_format_provider_changed(self, text):
+        provider = "proxy" if text == "Antigravity Proxy" else "groq"
+        self.config.set("format_provider", provider)
+        self.config.save()
+        self._update_formatter_controls_visibility()
+        self._refresh_pipeline_summary()
+        self.config_changed.emit("format_provider", provider)
+
+    def on_proxy_formatter_model_changed(self, text):
+        if text:
+            self.config.set("proxy_formatter_model", text.strip())
+            self.config.save()
+
+    def on_casual_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("casual_mode", enabled)
+        self.config.save()
         self._refresh_pipeline_summary()
 
     def on_translate_toggle_changed(self, state):
@@ -2025,6 +2129,19 @@ class MainWindow(QWidget):
             self.model_combo.setCurrentText(current_model)
 
         self.model_combo.blockSignals(False)
+
+    def set_proxy_formatter_model_list(self, models):
+        self.proxy_formatter_model_combo.blockSignals(True)
+        current = self.proxy_formatter_model_combo.currentText()
+        self.proxy_formatter_model_combo.clear()
+        self.proxy_formatter_model_combo.addItems(models)
+        if current:
+            self.proxy_formatter_model_combo.setCurrentText(current)
+        elif models:
+            saved = self.config.get("proxy_formatter_model", "")
+            if saved and saved in models:
+                self.proxy_formatter_model_combo.setCurrentText(saved)
+        self.proxy_formatter_model_combo.blockSignals(False)
 
     def _set_connected_status(self, text):
         self._set_status_badge(text, "ok")
