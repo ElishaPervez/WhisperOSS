@@ -13,6 +13,7 @@ from PyQt6.QtGui import QIcon, QAction, QCursor
 
 
 from src.config_manager import ConfigManager
+from src import autostart
 from src.audio_recorder import AudioRecorder
 from src.groq_client import GroqClient
 from src.gemini_client import GeminiClient
@@ -72,6 +73,9 @@ class WhisperAppController(QObject):
 
         # Load config first
         self.config = ConfigManager()
+
+        # Reconcile Windows Run-key with the saved preference. No-op in dev runs.
+        autostart.reconcile(bool(self.config.get("run_on_startup", True)))
 
         # Connect hotkey signals to recording actions (thread-safe)
         self._start_recording_signal.connect(lambda: self.set_recording(True, "transcribe"))

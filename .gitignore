@@ -54,6 +54,7 @@ gha-creds-*.json
 
 # Inno Setup compiler output
 installer/Output/
+installer/test-download/
 
 personal run.bat
 test_proxy.py

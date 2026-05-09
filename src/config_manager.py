@@ -40,7 +40,8 @@ DEFAULT_CONFIG = {
     "use_formatter": False,
     "casual_mode": False,
     "translation_enabled": False,
-    "target_language": "English"
+    "target_language": "English",
+    "run_on_startup": True,
 }
 
 class ConfigManager:

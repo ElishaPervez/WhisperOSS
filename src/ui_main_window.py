@@ -39,6 +39,9 @@ from PyQt6.QtWidgets import (
 )
 
 
+from src import autostart
+
+
 def _is_dark_theme_widget(widget):
     current = widget
     while current is not None:
@@ -1302,6 +1305,30 @@ class MainWindow(QWidget):
         note.setObjectName("MutedText")
         note.setWordWrap(True)
         appearance_layout.addWidget(note)
+
+        startup_divider = QFrame()
+        startup_divider.setObjectName("Divider")
+        appearance_layout.addWidget(startup_divider)
+
+        startup_caption = QLabel("Startup")
+        startup_caption.setObjectName("SectionCaption")
+        appearance_layout.addWidget(startup_caption)
+
+        startup_row = QHBoxLayout()
+        startup_label = QLabel("Run at logon")
+        self.startup_toggle = AnimatedToggle()
+        self.startup_toggle.setChecked(bool(self.config.get("run_on_startup", True)))
+        self.startup_toggle.stateChanged.connect(self.on_startup_toggle_changed)
+        startup_row.addWidget(startup_label)
+        startup_row.addStretch()
+        startup_row.addWidget(self.startup_toggle)
+        appearance_layout.addLayout(startup_row)
+
+        startup_hint = QLabel("Launches WhisperOSS automatically when you sign in to Windows.")
+        startup_hint.setObjectName("MutedText")
+        startup_hint.setWordWrap(True)
+        appearance_layout.addWidget(startup_hint)
+
         appearance_layout.addStretch()
 
         self.settings_tabs.addTab(appearance_tab, "Theme")
@@ -1766,6 +1793,12 @@ class MainWindow(QWidget):
         self.config.set("animation_fps", fps)
         self.config.save()
         self.config_changed.emit("animation_fps", fps)
+
+    def on_startup_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("run_on_startup", enabled)
+        self.config.save()
+        autostart.reconcile(enabled)
 
     def on_stream_realtime_toggle_changed(self, state):
         enabled = state == int(Qt.CheckState.Checked.value)
