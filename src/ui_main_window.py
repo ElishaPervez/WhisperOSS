@@ -1093,6 +1093,25 @@ class MainWindow(QWidget):
         ai_caption.setObjectName("SectionCaption")
         pipeline_layout.addWidget(ai_caption)
 
+        web_search_row = QHBoxLayout()
+        web_search_label = QLabel("Web search (answer mode)")
+        self.web_search_toggle = AnimatedToggle()
+        self.web_search_toggle.setChecked(bool(self.config.get("web_search_enabled", True)))
+        self.web_search_toggle.stateChanged.connect(self.on_web_search_toggle_changed)
+        web_search_row.addWidget(web_search_label)
+        web_search_row.addStretch()
+        web_search_row.addWidget(self.web_search_toggle)
+        pipeline_layout.addLayout(web_search_row)
+
+        self.web_search_hint = QLabel(
+            "On: answer mode grounds responses with Google Search (requires a model + tier "
+            "with grounding quota — Gemini 2.5 family). Off: model answers from its own "
+            "training knowledge — works on every model."
+        )
+        self.web_search_hint.setObjectName("MutedText")
+        self.web_search_hint.setWordWrap(True)
+        pipeline_layout.addWidget(self.web_search_hint)
+
         formatter_row = QHBoxLayout()
         formatter_label = QLabel("AI Formatting")
         self.format_toggle = AnimatedToggle()
@@ -1751,6 +1770,11 @@ class MainWindow(QWidget):
         self.config.set("casual_mode", enabled)
         self.config.save()
         self._refresh_pipeline_summary()
+
+    def on_web_search_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("web_search_enabled", enabled)
+        self.config.save()
 
     def on_translate_toggle_changed(self, state):
         enabled = state == int(Qt.CheckState.Checked.value)

@@ -56,6 +56,9 @@ gha-creds-*.json
 installer/Output/
 installer/test-download/
 
+# Throwaway diagnostics (may contain real API keys, raw responses, etc.)
+experiments/
+
 personal run.bat
 test_proxy.py
 proxy_guide.md

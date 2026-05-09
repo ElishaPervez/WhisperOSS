@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     "translation_enabled": False,
     "target_language": "English",
     "run_on_startup": True,
+    "web_search_enabled": True,
 }
 
 class ConfigManager:

@@ -80,6 +80,7 @@ class GeminiClient:
         image_bytes: Optional[bytes] = None,
         stream_callback: Optional[Callable[[str], None]] = None,
         thought_callback: Optional[Callable[[str], None]] = None,
+        with_search: bool = True,
     ) -> str:
         if self.client is None or self._types is None:
             raise GeminiClientError("Gemini API key not set.")
@@ -88,11 +89,22 @@ class GeminiClient:
         if not cleaned_query:
             raise GeminiClientError("Empty Gemini query.")
 
-        config = self._types.GenerateContentConfig(
-            system_instruction=str(system_prompt or "").strip() or None,
-            tools=[self._types.Tool(google_search=self._types.GoogleSearch())],
-            thinking_config=self._types.ThinkingConfig(thinking_level="high"),
-        )
+        config_kwargs: dict = {
+            "system_instruction": str(system_prompt or "").strip() or None,
+        }
+        if with_search:
+            # google_search grounding is gated by tier and incompatible with
+            # thinking_config on Gemini 2.5 (returns 400). Caller decides.
+            config_kwargs["tools"] = [
+                self._types.Tool(google_search=self._types.GoogleSearch())
+            ]
+        else:
+            # Knowledge-only mode: keep thinking on, no tools — works on
+            # every Gemini/Gemma family without grounding-quota dependency.
+            config_kwargs["thinking_config"] = self._types.ThinkingConfig(
+                thinking_level="high"
+            )
+        config = self._types.GenerateContentConfig(**config_kwargs)
 
         contents: object = cleaned_query
         if image_bytes:

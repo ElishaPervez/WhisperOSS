@@ -585,6 +585,7 @@ class WhisperAppController(QObject):
                 gemini_client=self.gemini,
                 gemini_model_id=gemini_model_id,
                 selected_text=selected_text,
+                web_search_enabled=bool(self.config.get("web_search_enabled", True)),
             )
             self.worker.progress.connect(self._search_progress_signal.emit)
             self.worker.thought_text.connect(self._search_thought_signal.emit)
@@ -674,6 +675,7 @@ class WhisperAppController(QObject):
             gemini_model_id=gemini_model_id,
             query_text=query_text,
             image_png_bytes=image_png_bytes,
+            web_search_enabled=bool(self.config.get("web_search_enabled", True)),
         )
         self.worker.progress.connect(self._search_progress_signal.emit)
         self.worker.thought_text.connect(self._search_thought_signal.emit)

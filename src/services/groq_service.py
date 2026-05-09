@@ -101,7 +101,8 @@ class SearchWorker(QThread):
                  gemini_model_id: str = "models/gemma-4-31b-it",
                  query_text: str = "",
                  selected_text: str = "",
-                 image_png_bytes: Optional[bytes] = None):
+                 image_png_bytes: Optional[bytes] = None,
+                 web_search_enabled: bool = True):
         super().__init__()
         self.groq_client = groq_client
         self.audio_file = audio_file
@@ -109,6 +110,7 @@ class SearchWorker(QThread):
         self.gemini_model_id = str(gemini_model_id or "").strip() or "models/gemma-4-31b-it"
         self.query_text = str(query_text or "").strip()
         self.selected_text = _sanitize_selected_text(selected_text)
+        self.web_search_enabled = bool(web_search_enabled)
         self.image_png_bytes = bytes(image_png_bytes) if image_png_bytes else None
         if self.image_png_bytes and len(self.image_png_bytes) > 4_500_000:
             self.image_png_bytes = self.image_png_bytes[:4_500_000]
@@ -118,13 +120,17 @@ class SearchWorker(QThread):
 
     def _system_prompt_for_request(self) -> str:
         if self.image_png_bytes:
-            from src.prompts import SYSTEM_PROMPT_SEARCH_IMAGE
+            if self.web_search_enabled:
+                from src.prompts import SYSTEM_PROMPT_SEARCH_IMAGE
+                return SYSTEM_PROMPT_SEARCH_IMAGE
+            from src.prompts import SYSTEM_PROMPT_ANSWER_IMAGE
+            return SYSTEM_PROMPT_ANSWER_IMAGE
 
-            return SYSTEM_PROMPT_SEARCH_IMAGE
-
-        from src.prompts import SYSTEM_PROMPT_SEARCH
-
-        return SYSTEM_PROMPT_SEARCH
+        if self.web_search_enabled:
+            from src.prompts import SYSTEM_PROMPT_SEARCH
+            return SYSTEM_PROMPT_SEARCH
+        from src.prompts import SYSTEM_PROMPT_ANSWER
+        return SYSTEM_PROMPT_ANSWER
 
     @staticmethod
     def _build_search_input(raw_query: str, selected_text: str) -> str:
@@ -197,6 +203,7 @@ class SearchWorker(QThread):
                 image_bytes=self.image_png_bytes,
                 stream_callback=self._emit_stream_text,
                 thought_callback=self._emit_thought_text,
+                with_search=self.web_search_enabled,
             )
 
             self.finished.emit(answer)
