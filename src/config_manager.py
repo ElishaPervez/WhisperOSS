@@ -18,19 +18,14 @@ DEFAULT_CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "api_key": "",
+    "gemini_api_key": "",
+    "gemini_model": "models/gemma-4-31b-it",
     # "transcription_model" removed — TranscriptionWorker uses whisper-large-v3 directly.
     # Add back here and wire to TranscriptionWorker if model selection is needed in future.
     "formatter_model": "openai/gpt-oss-120b",  # Default fast/smart model
     # Single formatter style mode:
     # retained for backward-compatibility with older configs; only "Default" is used.
     "formatting_style": "Default",
-    # Quick-answer web search provider. Default stays Groq for out-of-box usability.
-    "use_antigravity_proxy_search": False,
-    "antigravity_proxy_url": "http://127.0.0.1:8045",
-    "antigravity_api_key": "",
-    "antigravity_search_model": "gemini-3-flash",
-    "antigravity_search_fallback_model": "gemini-2.5-flash",
-    "antigravity_thinking_level": "high",
     "input_device_index": None, # None means default
     "appearance_mode": "auto",  # auto | dark | light
     "animation_fps": 100,
@@ -43,6 +38,7 @@ DEFAULT_CONFIG = {
     "stream_reveal_wps": 8,
     "stream_catch_up_enabled": True,
     "use_formatter": False,
+    "casual_mode": False,
     "translation_enabled": False,
     "target_language": "English"
 }
@@ -57,34 +53,41 @@ class ConfigManager:
                                           Defaults to standard app data location.
         """
         self.config_file = Path(config_file) if config_file else DEFAULT_CONFIG_FILE
-        self._secret_store = ApiKeyStore()
+        self._secret_stores = {
+            "api_key": ApiKeyStore(account_name="groq_api_key"),
+            "gemini_api_key": ApiKeyStore(account_name="gemini_api_key"),
+        }
         self._ensure_config_exists()
         self.config = self._load_config()
-        self._migrate_plaintext_api_key()
+        self._migrate_plaintext_api_keys()
 
-    def _migrate_plaintext_api_key(self):
-        """Move legacy plaintext API key from config.json into secure store."""
-        plaintext_key = str(self.config.get("api_key", "") or "").strip()
-        if not plaintext_key:
-            return
+    def _migrate_plaintext_api_keys(self):
+        """Move legacy plaintext API keys from config.json into secure storage."""
+        changed = False
+        for key_name, store in self._secret_stores.items():
+            plaintext_key = str(self.config.get(key_name, "") or "").strip()
+            if not plaintext_key:
+                continue
 
-        if not self._secret_store.is_available:
-            logger.warning("Secure API key storage unavailable; keeping key in config.json.")
-            return
+            if not store.is_available:
+                logger.warning("Secure storage unavailable for %s; keeping key in config.json.", key_name)
+                continue
 
-        existing_secure_key = self._secret_store.get_api_key()
-        if existing_secure_key:
-            self.config["api_key"] = ""
+            existing_secure_key = store.get_api_key()
+            if existing_secure_key:
+                self.config[key_name] = ""
+                changed = True
+                continue
+
+            if store.set_api_key(plaintext_key):
+                self.config[key_name] = ""
+                changed = True
+                logger.info("Migrated %s from config.json to secure credential storage.", key_name)
+            else:
+                logger.warning("Failed to migrate %s to secure storage; keeping plaintext fallback.", key_name)
+
+        if changed:
             self._save_config(self.config)
-            logger.info("Secure credential already present; scrubbed plaintext config fallback.")
-            return
-
-        if self._secret_store.set_api_key(plaintext_key):
-            self.config["api_key"] = ""
-            self._save_config(self.config)
-            logger.info("Migrated API key from config.json to secure credential storage.")
-        else:
-            logger.warning("Failed to migrate API key to secure storage; keeping plaintext fallback.")
 
     def _ensure_config_exists(self):
         """Ensure the configuration directory and file exist."""
@@ -132,28 +135,30 @@ class ConfigManager:
 
     def get(self, key, default=None):
         """Get a configuration value."""
-        if key == "api_key":
-            secure_key = self._secret_store.get_api_key()
+        store = self._secret_stores.get(key)
+        if store is not None:
+            secure_key = store.get_api_key()
             if secure_key:
                 return secure_key
         return self.config.get(key, default)
 
     def set(self, key, value):
         """Set a configuration value in memory."""
-        if key == "api_key":
+        store = self._secret_stores.get(key)
+        if store is not None:
             normalized = str(value or "").strip()
             if not normalized:
-                self._secret_store.clear_api_key()
-                self.config["api_key"] = ""
+                store.clear_api_key()
+                self.config[key] = ""
                 return
 
-            if self._secret_store.is_available and self._secret_store.set_api_key(normalized):
+            if store.is_available and store.set_api_key(normalized):
                 # Keep config file scrubbed when secure storage is active.
-                self.config["api_key"] = ""
+                self.config[key] = ""
                 return
 
-            logger.warning("Secure API key storage unavailable; falling back to config.json.")
-            self.config["api_key"] = normalized
+            logger.warning("Secure API key storage unavailable for %s; falling back to config.json.", key)
+            self.config[key] = normalized
             return
 
         self.config[key] = value

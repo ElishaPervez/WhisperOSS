@@ -1,11 +1,11 @@
 import logging
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 import io
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.groq_client import GroqClient
+from src.gemini_client import GeminiClient
 from src.math_formatting import normalize_math_dictation
-from src.proxy_search_client import ProxySearchClient
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -40,9 +40,7 @@ class TranscriptionWorker(QThread):
                  use_translation: bool = False,
                  target_language: str = "English",
                  formatting_style: str = "Default",
-                 active_context: str = "",
-                 proxy_format_client=None,
-                 proxy_format_model: str = ""):
+                 active_context: str = ""):
         super().__init__()
         self.groq_client = groq_client
         self.audio_file = audio_file
@@ -52,19 +50,6 @@ class TranscriptionWorker(QThread):
         self.target_language = target_language
         self.formatting_style = formatting_style
         self.active_context = active_context
-        self.proxy_format_client = proxy_format_client
-        self.proxy_format_model = proxy_format_model
-
-    def _format_text(self, raw_text: str, model_id: str, system_prompt: str) -> str:
-        """Route formatting through proxy or Groq based on configuration."""
-        if self.proxy_format_client is not None:
-            logger.info("Formatting via Antigravity Proxy (model=%s)", self.proxy_format_model or model_id)
-            return self.proxy_format_client.format_text(
-                raw_text,
-                model_id=self.proxy_format_model or model_id,
-                system_prompt=system_prompt,
-            )
-        return self.groq_client.format_text(raw_text, model_id, system_prompt=system_prompt)
 
     def run(self) -> None:
         try:
@@ -79,7 +64,7 @@ class TranscriptionWorker(QThread):
                     from src.prompts import SYSTEM_PROMPT_TRANSLATOR
                     prompt = SYSTEM_PROMPT_TRANSLATOR.format(language=self.target_language)
                     logger.info(f"Using Translator Prompt for language: {self.target_language}")
-                    formatted = self._format_text(raw_text, self.format_model, prompt)
+                    formatted = self.groq_client.format_text(raw_text, self.format_model, prompt)
                 else:
                     from src.prompts import get_formatter_prompt
                     prompt = get_formatter_prompt(self.formatting_style)
@@ -91,7 +76,7 @@ class TranscriptionWorker(QThread):
                             f"Active window title: \"{safe_context}\"."
                         )
                     logger.info(f"Using Formatter Prompt for style: {self.formatting_style}, context: {self.active_context or 'None'}")
-                    formatted = self._format_text(raw_text, self.format_model, prompt)
+                    formatted = self.groq_client.format_text(raw_text, self.format_model, prompt)
                     formatted = normalize_math_dictation(formatted)
 
                 final_text = formatted
@@ -107,20 +92,21 @@ class SearchWorker(QThread):
     error = pyqtSignal(str)
     progress = pyqtSignal(str)
     stream_text = pyqtSignal(str)
+    thought_text = pyqtSignal(str)
 
     def __init__(self,
                  groq_client: GroqClient,
                  audio_file: Optional[Union[str, io.BytesIO]],
-                 refinement_model_id: str = "openai/gpt-oss-120b",
-                 search_client: Optional[ProxySearchClient] = None,
+                 gemini_client: Optional[GeminiClient] = None,
+                 gemini_model_id: str = "models/gemma-4-31b-it",
                  query_text: str = "",
                  selected_text: str = "",
                  image_png_bytes: Optional[bytes] = None):
         super().__init__()
         self.groq_client = groq_client
         self.audio_file = audio_file
-        self.refinement_model_id = refinement_model_id
-        self.search_client = search_client
+        self.gemini_client = gemini_client
+        self.gemini_model_id = str(gemini_model_id or "").strip() or "models/gemma-4-31b-it"
         self.query_text = str(query_text or "").strip()
         self.selected_text = _sanitize_selected_text(selected_text)
         self.image_png_bytes = bytes(image_png_bytes) if image_png_bytes else None
@@ -128,22 +114,21 @@ class SearchWorker(QThread):
             self.image_png_bytes = self.image_png_bytes[:4_500_000]
         self._last_progress = ""
         self._last_stream_text = ""
+        self._last_thought_text = ""
+
+    def _system_prompt_for_request(self) -> str:
+        if self.image_png_bytes:
+            from src.prompts import SYSTEM_PROMPT_SEARCH_IMAGE
+
+            return SYSTEM_PROMPT_SEARCH_IMAGE
+
+        from src.prompts import SYSTEM_PROMPT_SEARCH
+
+        return SYSTEM_PROMPT_SEARCH
 
     @staticmethod
-    def _build_refinement_input(query_text: str, selected_text: str) -> str:
-        base_query = str(query_text or "").strip()
-        if not selected_text:
-            return base_query
-        return (
-            "Spoken: "
-            + base_query
-            + "\nSelected: "
-            + str(selected_text).strip()
-        )
-
-    @staticmethod
-    def _build_search_input(refined_query: str, selected_text: str) -> str:
-        base_query = str(refined_query or "").strip()
+    def _build_search_input(raw_query: str, selected_text: str) -> str:
+        base_query = str(raw_query or "").strip()
         if not selected_text:
             return base_query
         return (
@@ -171,16 +156,24 @@ class SearchWorker(QThread):
         self._last_stream_text = rendered
         self.stream_text.emit(rendered)
 
+    def _emit_thought_text(self, text: str) -> None:
+        rendered = str(text or "")
+        if not rendered:
+            return
+        if rendered == self._last_thought_text:
+            return
+        self._last_thought_text = rendered
+        self.thought_text.emit(rendered)
+
     def run(self) -> None:
         try:
-            from src.prompts import TRANSCRIPTION_PROMPT, SYSTEM_PROMPT_REFINE
+            from src.prompts import TRANSCRIPTION_PROMPT
             query_text = self.query_text
             if not query_text:
                 if self.audio_file is None:
                     self.error.emit("No speech detected.")
                     return
                 # Step 1: Transcribe using standard Whisper model
-                # We use the standard prompt for accuracy
                 self._emit_progress("Transcribing speech")
                 query_text = self.groq_client.transcribe(self.audio_file, prompt=TRANSCRIPTION_PROMPT)
 
@@ -188,63 +181,23 @@ class SearchWorker(QThread):
                 self.error.emit("No speech detected.")
                 return
 
-            # Step 2: Refine Query (skip when "insert X here" detected)
-            # The INSERT RESOLUTION prompt in the search step needs the raw
-            # sentence structure to replace placeholders inline.  Refinement
-            # would strip it, so we bypass it for insert-mode queries.
-            import re
-            has_insert_pattern = bool(
-                re.search(r'\binsert\b.+?\bhere\b', query_text, re.IGNORECASE)
-            )
-
-            if has_insert_pattern:
-                logger.info(
-                    "Insert-resolution detected — skipping query refinement. raw='%s'",
-                    query_text,
-                )
-                search_input = query_text.strip()
-            else:
-                # Normal path: use the high-intelligence model to clean up the query
-                self._emit_progress("Refining query")
-                refinement_input = self._build_refinement_input(query_text, self.selected_text)
-                refined_query = self.groq_client.format_text(
-                    refinement_input,
-                    model_id=self.refinement_model_id,
-                    system_prompt=SYSTEM_PROMPT_REFINE
-                )
-
-                logger.info(
-                    "Refined query (%s): '%s' -> '%s' [selected=%s image=%s]",
-                    self.refinement_model_id,
-                    query_text,
-                    refined_query,
-                    "yes" if self.selected_text else "no",
-                    "yes" if self.image_png_bytes else "no",
-                )
-                search_input = self._build_search_input(refined_query, self.selected_text)
+            # Step 2: Build search input directly from raw transcription
+            search_input = self._build_search_input(query_text, self.selected_text)
 
             # Step 3: Search / Answer
-            # Always use Antigravity proxy when a search_client is provided.
-            # No Groq fallback — proxy failure surfaces as an error.
+            if self.gemini_client is None:
+                self.error.emit("Gemini API key not configured.")
+                return
+
             self._emit_progress("Sending API request")
-            if self.search_client is not None:
-                proxy_kwargs: Dict[str, object] = {}
-                if isinstance(self.search_client, ProxySearchClient):
-                    proxy_kwargs["step_callback"] = self._emit_progress
-                    proxy_kwargs["stream_callback"] = self._emit_stream_text
-                if self.image_png_bytes:
-                    from src.prompts import SYSTEM_PROMPT_SEARCH_IMAGE
-                    answer = self.search_client.run_search(
-                        search_input,
-                        system_prompt=SYSTEM_PROMPT_SEARCH_IMAGE,
-                        image_bytes=self.image_png_bytes,
-                        **proxy_kwargs,
-                    )
-                else:
-                    answer = self.search_client.run_search(search_input, **proxy_kwargs)
-            else:
-                self._emit_progress("Searching knowledge base")
-                answer = self.groq_client.run_search(search_input)
+            answer = self.gemini_client.run_search(
+                search_input,
+                model_id=self.gemini_model_id,
+                system_prompt=self._system_prompt_for_request(),
+                image_bytes=self.image_png_bytes,
+                stream_callback=self._emit_stream_text,
+                thought_callback=self._emit_thought_text,
+            )
 
             self.finished.emit(answer)
 

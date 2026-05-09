@@ -20,6 +20,7 @@ from PyQt6.QtGui import (
     QPalette,
 )
 from typing import Optional
+import html
 import math
 import re
 import time
@@ -404,7 +405,142 @@ class CompactAudioVisualizer(QWidget):
                     t = (check_reveal - 0.45) / 0.55
                     x = p2[0] + (p3[0] - p2[0]) * t
                     y = p2[1] + (p3[1] - p2[1]) * t
-                    painter.drawLine(int(p2[0]), int(p2[1]), int(x), int(y))
+                painter.drawLine(int(p2[0]), int(p2[1]), int(x), int(y))
+
+
+class ThinkingMarquee(QWidget):
+    """Smooth left-scrolling strip for streamed model thought snippets."""
+
+    MAX_TEXT_CHARS = 1800
+    SCROLL_PX_PER_SECOND = 185.0
+    TEXT_GAP_PX = 42
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._text = ""
+        self._scroll_offset = 0.0
+        self._phase = 0.0
+        self._morph_progress = 0.0
+        self._last_tick_ts = 0.0
+        self._animation_fps = 100
+        self._font = QFont("Segoe UI Variable", 9)
+        self._font.setWeight(QFont.Weight.Medium)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._animate)
+        self.hide()
+
+    def set_animation_fps(self, fps: int):
+        self._animation_fps = _normalize_animation_fps(fps, self._animation_fps)
+        self._timer.setInterval(_interval_from_fps(self._animation_fps))
+
+    def thinking_text(self) -> str:
+        return self._text
+
+    def scroll_offset(self) -> float:
+        return float(self._scroll_offset)
+
+    def morph_progress(self) -> float:
+        return float(self._morph_progress)
+
+    def set_morph_progress(self, progress: float):
+        self._morph_progress = max(0.0, min(1.0, float(progress)))
+        self.update()
+
+    def clear(self):
+        self._text = ""
+        self._scroll_offset = 0.0
+        self._phase = 0.0
+        self._morph_progress = 0.0
+        self._last_tick_ts = 0.0
+        self._timer.stop()
+        self.update()
+
+    def append_text(self, text: str):
+        cleaned = " ".join(str(text or "").split())
+        if not cleaned:
+            return
+        separator = "   "
+        combined = (self._text + separator + cleaned).strip() if self._text else cleaned
+        if len(combined) > self.MAX_TEXT_CHARS:
+            combined = combined[-self.MAX_TEXT_CHARS :].lstrip()
+        self._text = combined
+        if self._last_tick_ts <= 0.0:
+            self._last_tick_ts = time.monotonic()
+        if not self._timer.isActive():
+            self._timer.start(_interval_from_fps(self._animation_fps))
+        self.update()
+
+    def _animate(self):
+        now = time.monotonic()
+        if self._last_tick_ts <= 0.0:
+            self._last_tick_ts = now
+        elapsed = max(0.0, now - self._last_tick_ts)
+        self._last_tick_ts = now
+        self._scroll_offset += self.SCROLL_PX_PER_SECOND * elapsed
+        self._phase += elapsed * 2.4
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        bounds = self.rect().adjusted(1, 1, -1, -1)
+        progress = float(self._morph_progress)
+        rotation_scale = max(0.045, abs(math.cos(progress * math.pi)))
+        draw_width = max(8, int(bounds.width() * rotation_scale))
+        rect = QRect(
+            int(bounds.center().x() - draw_width / 2),
+            bounds.y(),
+            draw_width,
+            bounds.height(),
+        )
+        radius = int(
+            round(
+                ((1.0 - progress) * max(10, self.height() // 2))
+                + (progress * min(16, max(8, self.height() // 5)))
+            )
+        )
+
+        bg = QLinearGradient(0, 0, self.width(), self.height())
+        surface_alpha = int(246 - (36 * min(1.0, progress)))
+        bg.setColorAt(0.0, QColor(0, 0, 0, surface_alpha))
+        bg.setColorAt(0.52, QColor(8, 10, 15, min(255, surface_alpha + 8)))
+        bg.setColorAt(1.0, QColor(0, 0, 0, surface_alpha))
+        painter.setBrush(QBrush(bg))
+        edge_alpha = int(28 + (85 * (1.0 - rotation_scale)))
+        painter.setPen(QPen(QColor(255, 255, 255, edge_alpha), 1.0))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        sweep_x = int((0.5 + 0.5 * math.sin(self._phase)) * max(1, self.width()))
+        sweep_width = 70 + int(80 * (1.0 - rotation_scale))
+        sweep = QLinearGradient(max(0, sweep_x - sweep_width), 0, min(self.width(), sweep_x + sweep_width), 0)
+        sweep.setColorAt(0.0, QColor(255, 255, 255, 0))
+        sweep.setColorAt(0.5, QColor(255, 255, 255, int(16 + (72 * (1.0 - rotation_scale)))))
+        sweep.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(sweep))
+        painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), radius - 2, radius - 2)
+
+        if not self._text or progress > 0.34:
+            return
+
+        painter.setFont(self._font)
+        fm = painter.fontMetrics()
+        text = self._text
+        text_width = max(1, fm.horizontalAdvance(text))
+        span = text_width + self.TEXT_GAP_PX
+        y = int((self.height() + fm.ascent() - fm.descent()) / 2)
+        x = 14 - int(self._scroll_offset % span)
+
+        painter.save()
+        painter.setClipRect(rect.adjusted(12, 4, -12, -4))
+        text_alpha = int(220 * max(0.0, 1.0 - (progress / 0.34)))
+        painter.setPen(QPen(QColor(222, 226, 232, text_alpha)))
+        while x < self.width() - 10:
+            painter.drawText(int(x), y, text)
+            x += span
+        painter.restore()
 
 
 # Keep AudioVisualizer for backward compatibility if needed as overlay
@@ -416,6 +552,11 @@ class AudioVisualizer(QWidget):
     PROCESSING_MIN_WIDTH = 120
     PROCESSING_MAX_WIDTH = 460
     PROCESSING_RESIZE_FRAMES = 8
+    THINKING_MIN_WIDTH = 280
+    THINKING_MAX_WIDTH = 430
+    THINKING_HEIGHT = 36
+    THINKING_RESIZE_FRAMES = 8
+    THINKING_ANSWER_MORPH_FRAMES = 44
     CARD_MIN_WIDTH = 214
     CARD_MAX_WIDTH = 640
     CARD_MIN_HEIGHT = 74
@@ -436,6 +577,7 @@ class AudioVisualizer(QWidget):
     STREAM_COMPLETION_TARGET_MS = 3000.0
     STREAM_MIN_WORD_STEP_MS = 4.0
     STREAM_TEXT_FADE_MIN_OPACITY = 0.70
+    STREAM_WORD_REVEAL_OVERLAP = 0.50
     ANSWER_TEXT_BASE_ALPHA = 246
 
     def __init__(self, animation_fps: int = 100):
@@ -449,6 +591,10 @@ class AudioVisualizer(QWidget):
         self._visualizer.resize(self.COMPACT_WIDTH, self.COMPACT_HEIGHT)
 
         self._answer_visible = False
+        self._thinking_visible = False
+        self._thinking_answer_morph_active = False
+        self._thinking_answer_morph_frames = 0
+        self._thinking_answer_morph_frame_index = 0
         self._answer_text_pending = ""
         self._answer_anchor_rect = QRect()
         self._processing_step_text = ""
@@ -473,6 +619,10 @@ class AudioVisualizer(QWidget):
         self._stream_reveal_wps = self._normalize_stream_reveal_wps(self.STREAM_DEFAULT_REVEAL_WPS)
         self._stream_catch_up_enabled = True
         self._answer_text_opacity_value = -1.0
+
+        self._thinking_marquee = ThinkingMarquee(self)
+        self._thinking_answer_morph_timer = QTimer(self)
+        self._thinking_answer_morph_timer.timeout.connect(self._tick_thinking_answer_morph)
 
         # Frame-driven transform animation so motion cadence follows configured FPS.
         self._transition_timer = QTimer(self)
@@ -747,7 +897,69 @@ class AudioVisualizer(QWidget):
     def _sync_child_geometry(self):
         bounds = self.rect()
         self._visualizer.setGeometry(bounds)
+        self._thinking_marquee.setGeometry(bounds)
         self._answer_card.setGeometry(bounds)
+
+    def _hide_thinking_overlay(self, clear: bool = True):
+        self._stop_thinking_answer_morph()
+        self._thinking_visible = False
+        self._thinking_marquee.hide()
+        if clear:
+            self._thinking_marquee.clear()
+
+    def _stop_thinking_answer_morph(self):
+        if self._thinking_answer_morph_timer.isActive():
+            self._thinking_answer_morph_timer.stop()
+        self._thinking_answer_morph_active = False
+        self._thinking_answer_morph_frames = 0
+        self._thinking_answer_morph_frame_index = 0
+
+    def _start_thinking_answer_morph(self, start_rect: QRect, end_rect: QRect):
+        self._stop_thinking_answer_morph()
+        self._thinking_answer_morph_active = True
+        self._thinking_answer_morph_frames = max(1, int(self.THINKING_ANSWER_MORPH_FRAMES))
+        self._thinking_answer_morph_frame_index = 0
+        self._thinking_marquee.set_morph_progress(0.0)
+        self._thinking_marquee.show()
+        self._thinking_marquee.raise_()
+        self._answer_card.hide()
+        self._visualizer.hide()
+        self._animate_widget_geometry(
+            start_rect=start_rect,
+            end_rect=end_rect,
+            frames=self._thinking_answer_morph_frames,
+            easing=QEasingCurve.Type.InOutCubic,
+            on_finished=self._finish_thinking_answer_morph,
+        )
+        self._thinking_answer_morph_timer.start(_interval_from_fps(self._animation_fps))
+
+    def _tick_thinking_answer_morph(self):
+        if not self._thinking_answer_morph_active or self._thinking_answer_morph_frames <= 0:
+            self._thinking_answer_morph_timer.stop()
+            return
+        self._thinking_answer_morph_frame_index += 1
+        progress = min(
+            1.0,
+            self._thinking_answer_morph_frame_index / float(self._thinking_answer_morph_frames),
+        )
+        eased = float(QEasingCurve(QEasingCurve.Type.InOutCubic).valueForProgress(progress))
+        self._thinking_marquee.set_morph_progress(eased)
+        if progress >= 1.0:
+            self._thinking_answer_morph_timer.stop()
+
+    def _finish_thinking_answer_morph(self):
+        self._stop_thinking_answer_morph()
+        self._thinking_visible = False
+        self._thinking_marquee.hide()
+        self._thinking_marquee.clear()
+        if not self._answer_visible:
+            return
+        self._answer_card.show()
+        self._answer_card.raise_()
+        self._visualizer.hide()
+        self._set_click_through(False)
+        self._sync_child_geometry()
+        self._scroll_answer_to_bottom(force=True)
 
     def _reset_streaming_answer_state(self, clear_dismissed: bool = True):
         self._streaming_answer_active = False
@@ -860,6 +1072,46 @@ class AudioVisualizer(QWidget):
 
         return max(self.STREAM_MIN_WORD_STEP_MS, step_ms)
 
+    def _streaming_segment_reveal_opacities(
+        self,
+        progress_units: float,
+        step_ms: float,
+        segment_count: int,
+    ) -> list[float]:
+        del step_ms  # Progress is normalized in word units; kept for test/debug readability.
+        count = max(0, int(segment_count))
+        overlap = max(0.05, min(0.95, float(self.STREAM_WORD_REVEAL_OVERLAP)))
+        progress = max(0.0, float(progress_units))
+        opacities: list[float] = []
+        for index in range(count):
+            opacity = progress - (float(index) * overlap)
+            opacities.append(max(0.0, min(1.0, opacity)))
+        return opacities
+
+    def _render_streaming_segments_with_opacity(self, opacities: list[float]) -> str:
+        display_segments = [
+            segment
+            for segment, opacity in zip(self._streaming_arrived_segments, opacities)
+            if opacity > 0.001
+        ]
+        visible_text = "".join(display_segments)
+        if self._contains_markdown_markup(visible_text):
+            max_opacity = max((opacity for opacity in opacities if opacity > 0.001), default=1.0)
+            return self._answer_rich_text_from_markdown(visible_text, opacity=max_opacity)
+
+        parts: list[str] = []
+        for segment, opacity in zip(self._streaming_arrived_segments, opacities):
+            if opacity <= 0.001:
+                continue
+            alpha = max(0.0, min(1.0, float(opacity)))
+            escaped = html.escape(str(segment or ""))
+            parts.append(
+                f"<span style=\"color: rgba(248, 249, 251, {alpha:.3f});\">{escaped}</span>"
+            )
+        if not parts:
+            return ""
+        return "<span style=\"font-size: 13px; font-weight: 500;\">" + "".join(parts) + "</span>"
+
     @staticmethod
     def _streaming_geometry_lerp_factor(elapsed_ms: float) -> float:
         if elapsed_ms <= 0:
@@ -884,6 +1136,7 @@ class AudioVisualizer(QWidget):
         visible_segments = min(self._streaming_visible_segments, total_segments)
         backlog_segments = max(0, total_segments - visible_segments)
         reveal_count = 0
+        step_ms_for_render = self._streaming_word_step_ms(backlog_segments or total_segments)
 
         if backlog_segments > 0:
             if self._stream_realtime_enabled:
@@ -898,15 +1151,42 @@ class AudioVisualizer(QWidget):
                 self._streaming_reveal_carry = reveal_progress - reveal_count
                 if reveal_count > 0:
                     visible_segments = min(total_segments, visible_segments + reveal_count)
-                    self._streaming_visible_segments = visible_segments
+                self._streaming_visible_segments = visible_segments
         else:
             self._streaming_reveal_carry = 0.0
             self._streaming_visible_segments = visible_segments
 
-        visible_text = "".join(self._streaming_arrived_segments[: self._streaming_visible_segments])
-        if visible_text != self._streaming_visible_text:
+        progress_units = float(self._streaming_visible_segments) + float(self._streaming_reveal_carry)
+        opacities = self._streaming_segment_reveal_opacities(
+            progress_units,
+            step_ms_for_render,
+            total_segments,
+        )
+        display_segments = 0
+        for opacity in opacities:
+            if opacity <= 0.001:
+                break
+            display_segments += 1
+
+        visible_text = "".join(self._streaming_arrived_segments[:display_segments])
+        rendered_visible_text = ""
+        if not self._stream_realtime_enabled:
+            rendered_visible_text = self._render_streaming_segments_with_opacity(opacities)
+        if (
+            visible_text != self._streaming_visible_text
+            or (
+                not self._stream_realtime_enabled
+                and not self._auto_dismiss_timer.isActive()
+                and rendered_visible_text
+                and self._answer_label.text() != rendered_visible_text
+            )
+        ):
             self._streaming_visible_text = visible_text
-            self._answer_label.setText(self._streaming_visible_text)
+            if self._stream_realtime_enabled:
+                self._set_answer_label_display_text(self._streaming_visible_text)
+            else:
+                self._answer_label.setTextFormat(Qt.TextFormat.RichText)
+                self._answer_label.setText(rendered_visible_text)
             self._trigger_streaming_text_fade(reveal_count)
 
         target = QRect(self._streaming_target_rect)
@@ -953,12 +1233,25 @@ class AudioVisualizer(QWidget):
 
         self._scroll_answer_to_bottom()
 
+        visual_reveal_threshold = 0.0
+        if total_segments > 0:
+            visual_reveal_threshold = (
+                (float(total_segments - 1) * float(self.STREAM_WORD_REVEAL_OVERLAP))
+                + 1.0
+            )
+        visual_reveal_complete = total_segments <= 0 or progress_units >= visual_reveal_threshold
+
         reveal_complete = (
             (not self._streaming_answer_active)
             and (self._streaming_pending_text is None)
-            and (self._streaming_visible_segments >= len(self._streaming_arrived_segments))
+            and visual_reveal_complete
         )
         if reveal_complete and self._answer_visible and (not self._auto_dismiss_timer.isActive()):
+            final_text = self._streaming_answer_text or "".join(self._streaming_arrived_segments)
+            self._set_answer_label_display_text(final_text)
+            self._streaming_visible_text = final_text
+            self._streaming_visible_segments = total_segments
+            self._streaming_reveal_carry = 0.0
             self._auto_dismiss_timer.start(self.ANSWER_AUTO_DISMISS_MS)
 
         if (
@@ -1019,6 +1312,51 @@ class AudioVisualizer(QWidget):
         # so QLabel Markdown rendering keeps the intended emphasis.
         return re.sub(r"\*\*([^\n]+?)\*\*", _trim_bold_inner, source)
 
+    @classmethod
+    def _inline_markdown_to_html(cls, text: str) -> str:
+        source = cls._normalize_markdown_bold_spacing(str(text or ""))
+        chunks: list[str] = []
+        cursor = 0
+        for match in re.finditer(r"\*\*([^\n*]+?)\*\*", source):
+            chunks.append(html.escape(source[cursor : match.start()]))
+            chunks.append(f"<strong>{html.escape(match.group(1).strip())}</strong>")
+            cursor = match.end()
+        chunks.append(html.escape(source[cursor:]))
+        return "".join(chunks)
+
+    @classmethod
+    def _answer_rich_text_from_markdown(cls, text: str, opacity: float = 1.0) -> str:
+        alpha = max(0.0, min(1.0, float(opacity)))
+        lines = str(text or "").splitlines() or [""]
+        rendered_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if re.match(r"^[-*+]\s+\S", stripped):
+                item_text = re.sub(r"^[-*+]\s+", "", stripped)
+                rendered_lines.append(f"<div>&bull; {cls._inline_markdown_to_html(item_text)}</div>")
+            elif re.match(r"^\d+\.\s+\S", stripped):
+                rendered_lines.append(f"<div>{cls._inline_markdown_to_html(stripped)}</div>")
+            elif stripped:
+                rendered_lines.append(f"<div>{cls._inline_markdown_to_html(line)}</div>")
+            else:
+                rendered_lines.append("<div><br></div>")
+
+        body = "".join(rendered_lines)
+        return (
+            "<div style=\"font-size: 13px; font-weight: 500; "
+            f"color: rgba(248, 249, 251, {alpha:.3f});\">"
+            f"{body}</div>"
+        )
+
+    def _set_answer_label_display_text(self, text: str):
+        rendered = str(text or "")
+        if self._contains_markdown_markup(rendered):
+            self._answer_label.setTextFormat(Qt.TextFormat.RichText)
+            self._answer_label.setText(self._answer_rich_text_from_markdown(rendered))
+        else:
+            self._answer_label.setTextFormat(Qt.TextFormat.MarkdownText)
+            self._answer_label.setText(rendered)
+
     def _create_markdown_document(self, text: str) -> QTextDocument:
         doc = QTextDocument()
         doc.setDocumentMargin(0.0)
@@ -1060,8 +1398,8 @@ class AudioVisualizer(QWidget):
         has_markup = self._contains_markdown_markup(text) or ("\n" in text)
 
         # Keep short answers as slim single-line cards.
-        if (not has_markup) and natural_width <= int(max_text_width * 0.78):
-            return int(max(min_text_width, min(max_text_width, natural_width + 10)))
+        if (not has_markup) and len(plain_text.strip()) <= 72 and natural_width <= int(max_text_width * 0.9):
+            return int(max(156, min(max_text_width, natural_width + 10)))
 
         best_width = max_text_width
         best_score = None
@@ -1145,6 +1483,8 @@ class AudioVisualizer(QWidget):
         return QRect(int(x), int(y), int(width), int(height))
 
     def _answer_rect_for_reference(self, reference_rect: QRect, answer: str) -> QRect:
+        previous_text = self._answer_label.text()
+        previous_format = self._answer_label.textFormat()
         screen_geo = self._screen_geometry_for_rect(reference_rect)
         max_width = max(
             self.CARD_MIN_WIDTH,
@@ -1179,6 +1519,9 @@ class AudioVisualizer(QWidget):
         target_width = max(target_body_width + horizontal_padding, button_width + horizontal_padding + 4)
         target_width = max(self.CARD_MIN_WIDTH, min(max_width, int(target_width)))
         target_body_width = max(1, target_width - horizontal_padding)
+        final_label_width = max(1, target_body_width - surface_horizontal)
+        if final_label_width != text_width:
+            label_height = self._measure_rendered_label_height(answer, final_label_width)
 
         button_row_height = max(24, button_height) + layout_spacing + 6
         max_height = max(
@@ -1191,7 +1534,7 @@ class AudioVisualizer(QWidget):
         max_body_height = max(28, max_height - vertical_padding - button_row_height)
         full_body_height = label_height + surface_vertical
         body_height = min(full_body_height, max_body_height)
-        self._answer_label.setFixedWidth(max(1, target_body_width - surface_horizontal))
+        self._answer_label.setFixedWidth(final_label_width)
         self._answer_label.setMinimumHeight(label_height)
         self._answer_label.setMaximumHeight(label_height)
         self._answer_body_container.setFixedSize(target_body_width, full_body_height)
@@ -1218,6 +1561,8 @@ class AudioVisualizer(QWidget):
         if max_y >= min_y:
             y = max(min_y, min(y, max_y))
 
+        self._answer_label.setTextFormat(previous_format)
+        self._answer_label.setText(previous_text)
         return QRect(int(x), int(y), int(target_width), int(target_height))
 
     def _animate_widget_geometry(
@@ -1308,8 +1653,10 @@ class AudioVisualizer(QWidget):
     def set_animation_fps(self, fps: int):
         self._animation_fps = _normalize_animation_fps(fps, self._animation_fps)
         self._visualizer.set_animation_fps(self._animation_fps)
+        self._thinking_marquee.set_animation_fps(self._animation_fps)
         self._fade_timer.setInterval(_interval_from_fps(self._animation_fps))
         self._transition_timer.setInterval(_interval_from_fps(self._animation_fps))
+        self._thinking_answer_morph_timer.setInterval(_interval_from_fps(self._animation_fps))
         self._streaming_resize_timer.setInterval(_interval_from_fps(self._animation_fps))
 
     def show(self):
@@ -1341,6 +1688,7 @@ class AudioVisualizer(QWidget):
         self._auto_dismiss_timer.stop()
         self._processing_step_text = ""
         self._visualizer.set_processing_text("")
+        self._hide_thinking_overlay(clear=True)
         if self._answer_reveal_timer.isActive():
             self._answer_reveal_timer.stop()
             self._answer_text_pending = ""
@@ -1357,9 +1705,12 @@ class AudioVisualizer(QWidget):
         self._auto_dismiss_timer.stop()
         self._answer_reveal_timer.stop()
         self._answer_text_pending = ""
+        had_thinking = self._thinking_visible or self._thinking_marquee.isVisible()
+        self._hide_thinking_overlay(clear=True)
         self._reset_streaming_answer_state(clear_dismissed=True)
         if (
-            not self._answer_visible
+            not had_thinking
+            and not self._answer_visible
             and not self._answer_card.isVisible()
             and not self._transition_timer.isActive()
         ):
@@ -1392,7 +1743,10 @@ class AudioVisualizer(QWidget):
         self._answer_reveal_timer.stop()
         self._fade_timer.stop()
         self._stop_answer_transition()
+        morph_from_thinking = self._thinking_visible and self._thinking_marquee.isVisible()
         self._reset_streaming_answer_state(clear_dismissed=False)
+        if not morph_from_thinking:
+            self._hide_thinking_overlay(clear=True)
 
         if not self.isVisible():
             self._is_showing = True
@@ -1414,8 +1768,11 @@ class AudioVisualizer(QWidget):
         self._answer_text_pending = ""
         self._answer_label.setText("")
         self._set_answer_text_opacity(1.0)
-        self._answer_card.show()
-        self._answer_card.raise_()
+        if morph_from_thinking:
+            self._answer_card.hide()
+        else:
+            self._answer_card.show()
+            self._answer_card.raise_()
         self._visualizer.hide()
         self._streaming_last_tick_ts = time.monotonic()
         self._streaming_auto_follow = True
@@ -1427,12 +1784,15 @@ class AudioVisualizer(QWidget):
             initial_reference,
             " ",
         )
-        self._animate_widget_geometry(
-            start_rect=start_rect,
-            end_rect=self._streaming_target_rect,
-            frames=max(10, int(self.ANSWER_EXPAND_FRAMES * 0.45)),
-            easing=QEasingCurve.Type.OutCubic,
-        )
+        if morph_from_thinking:
+            self._start_thinking_answer_morph(start_rect, self._streaming_target_rect)
+        else:
+            self._animate_widget_geometry(
+                start_rect=start_rect,
+                end_rect=self._streaming_target_rect,
+                frames=max(10, int(self.ANSWER_EXPAND_FRAMES * 0.45)),
+                easing=QEasingCurve.Type.OutCubic,
+            )
         if not self._streaming_resize_timer.isActive():
             self._streaming_resize_timer.start()
 
@@ -1516,6 +1876,84 @@ class AudioVisualizer(QWidget):
         reveal_delay_ms = self._duration_for_frames(self.ANSWER_REVEAL_DELAY_FRAMES)
         self._answer_reveal_timer.start(reveal_delay_ms)
 
+    def _thinking_rect_for_reference(self, reference_rect: QRect) -> QRect:
+        screen_geo = self._screen_geometry_for_rect(reference_rect)
+        width = max(
+            self.THINKING_MIN_WIDTH,
+            min(
+                self.THINKING_MAX_WIDTH,
+                max(self.THINKING_MIN_WIDTH, screen_geo.width() - 24),
+            ),
+        )
+        height = self.THINKING_HEIGHT
+        center_x = reference_rect.center().x()
+        bottom_y = reference_rect.bottom()
+        margin = 12
+
+        x = center_x - (width // 2)
+        y = bottom_y - height + 1
+
+        min_x = screen_geo.x() + margin
+        max_x = screen_geo.x() + screen_geo.width() - width - margin
+        min_y = screen_geo.y() + margin
+        max_y = screen_geo.y() + screen_geo.height() - height - margin
+
+        if max_x >= min_x:
+            x = max(min_x, min(x, max_x))
+        if max_y >= min_y:
+            y = max(min_y, min(y, max_y))
+        return QRect(int(x), int(y), int(width), int(height))
+
+    def append_thinking_text(self, thought_text: str, reason: str = ""):
+        text = str(thought_text or "")
+        if not text or self._answer_visible or self._streaming_answer_dismissed:
+            return
+        self._trace_widget_event(
+            "widget_thinking_append",
+            "AudioVisualizer.append_thinking_text",
+            reason=reason or "thought chunk received",
+            thought_preview=text[:160],
+        )
+        self._hide_after_completion_timer.stop()
+        self._auto_dismiss_timer.stop()
+        self._answer_reveal_timer.stop()
+        self._fade_timer.stop()
+        self._set_click_through(True)
+
+        if not self.isVisible():
+            self._is_showing = True
+            self._opacity = 1.0
+            self.setWindowOpacity(1.0)
+            super().show()
+        else:
+            self._is_showing = True
+            self._opacity = 1.0
+            self.setWindowOpacity(1.0)
+
+        start_rect = QRect(self.geometry())
+        if start_rect.width() <= 0 or start_rect.height() <= 0:
+            start_rect = QRect(self.x(), self.y(), self.COMPACT_WIDTH, self.COMPACT_HEIGHT)
+            self.setGeometry(start_rect)
+
+        self._thinking_visible = True
+        self._answer_visible = False
+        self._answer_card.hide()
+        self._visualizer.hide()
+        self._thinking_marquee.append_text(text)
+        self._thinking_marquee.show()
+        self._thinking_marquee.raise_()
+
+        target_rect = self._thinking_rect_for_reference(start_rect)
+        if self.geometry() != target_rect:
+            self._animate_widget_geometry(
+                start_rect=start_rect,
+                end_rect=target_rect,
+                frames=self.THINKING_RESIZE_FRAMES,
+                easing=QEasingCurve.Type.OutCubic,
+            )
+        else:
+            self._sync_child_geometry()
+
     def _begin_answer_reveal(self):
         text = (self._answer_text_pending or "").strip()
         if not text:
@@ -1534,7 +1972,7 @@ class AudioVisualizer(QWidget):
         self._set_click_through(False)
         self._answer_visible = True
         self._answer_text_pending = ""
-        self._answer_label.setText(text)
+        self._set_answer_label_display_text(text)
         self._set_answer_text_opacity(1.0)
         self._answer_card.show()
         self._answer_card.raise_()
@@ -1603,6 +2041,7 @@ class AudioVisualizer(QWidget):
         self._auto_dismiss_timer.stop()
         self._answer_reveal_timer.stop()
         self._hide_after_completion_timer.stop()
+        self._hide_thinking_overlay(clear=True)
         self._fade_timer.stop()
         self._is_showing = True
         self._fade_target = 1.0
@@ -1734,6 +2173,7 @@ class AudioVisualizer(QWidget):
         self._stop_answer_transition()
         self._processing_step_text = ""
         self._visualizer.set_processing_text("")
+        self._hide_thinking_overlay(clear=True)
         current = QRect(self.geometry())
         if current.width() < self.COMPACT_WIDTH or current.height() != self.COMPACT_HEIGHT:
             if current.width() <= 0 or current.height() <= 0:

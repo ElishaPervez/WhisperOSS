@@ -11,6 +11,7 @@ def app(qtbot):
 def mock_deps():
     with patch("src.controller.ConfigManager") as mock_cfg, \
          patch("src.controller.GroqClient") as mock_groq_package, \
+         patch("src.controller.GeminiClient") as mock_gemini_package, \
          patch("src.controller.AudioRecorder") as mock_rec_package, \
          patch("src.controller.HotkeyManager") as mock_hotkey_package, \
          patch("src.controller.MainWindow") as mock_win_package, \
@@ -21,6 +22,8 @@ def mock_deps():
         mock_cfg_inst = mock_cfg.return_value
         mock_cfg_inst.get.side_effect = lambda key, default=None: {
             "api_key": "test_key",
+            "gemini_api_key": "gemini_key",
+            "gemini_model": "models/gemma-4-31b-it",
             "input_device_index": 0,
             "use_formatter": False,
             "formatter_model": "test_model",
@@ -33,6 +36,10 @@ def mock_deps():
         mock_groq_inst = mock_groq_package.return_value
         mock_groq_inst.check_connection.return_value = True
         mock_groq_inst.list_models.return_value = (["whisper-1"], ["llama3"])
+
+        mock_gemini_inst = mock_gemini_package.return_value
+        mock_gemini_inst.check_connection.return_value = True
+        mock_gemini_inst.list_models.return_value = ["models/gemma-4-31b-it", "models/gemini-2.5-flash"]
         
         # Setup Recorder defaults
         mock_rec_inst = mock_rec_package.return_value
@@ -42,6 +49,7 @@ def mock_deps():
         yield {
             "config": mock_cfg_inst,
             "groq": mock_groq_inst,
+            "gemini": mock_gemini_inst,
             "recorder": mock_rec_inst,
             "hotkey": mock_hotkey_package.return_value,
             "hotkey_class": mock_hotkey_package,
@@ -55,6 +63,7 @@ def test_controller_init(app, mock_deps):
     
     mock_deps["config"].get.assert_called()
     mock_deps["groq"].check_connection.assert_called() # refresh_models called
+    mock_deps["gemini"].list_models.assert_called()
     mock_deps["recorder"].list_devices.assert_called()
     # Controller launches tray-first; main window stays hidden until restored.
     mock_deps["window"].show.assert_not_called()
@@ -103,10 +112,10 @@ def test_hotkey_bindings_for_search_and_image(app, mock_deps):
 def test_search_progress_signal_updates_processing_step(app, mock_deps):
     controller = WhisperAppController()
 
-    controller._on_search_progress("Searching web")
+    controller._on_search_progress("Sending API request")
 
     mock_deps["visualizer"].set_processing_step.assert_called_with(
-        "Searching web",
+        "Sending API request",
         reason="SearchWorker.progress signal",
     )
 
@@ -120,6 +129,17 @@ def test_search_stream_signal_shows_and_updates_streaming_answer(app, mock_deps)
         reason="first streamed answer chunk"
     )
     assert mock_deps["visualizer"].update_streaming_answer.call_count == 2
+
+
+def test_search_thought_signal_updates_thinking_overlay(app, mock_deps):
+    controller = WhisperAppController()
+
+    controller._on_search_thought_text("I will compare the sources. ")
+
+    mock_deps["visualizer"].append_thinking_text.assert_called_once_with(
+        "I will compare the sources. ",
+        reason="Gemini streamed thought chunk",
+    )
 
 def test_on_transcription_complete(app, mock_deps):
     controller = WhisperAppController()
@@ -201,18 +221,17 @@ def test_paste_text_uses_clipboard_paste_and_restore(app, mock_deps):
     )
     mock_deps["visualizer"].cancel_processing.assert_not_called()
 
-def test_start_transcription_search_always_uses_proxy(app, mock_deps):
-    """Search mode must always pass search_client regardless of proxy toggle."""
+def test_start_transcription_search_uses_gemini(app, mock_deps):
     controller = WhisperAppController()
     controller.recording_mode = "search"
 
-    # Even when use_antigravity_proxy_search is False, proxy must be used
     mock_deps["config"].get.side_effect = lambda key, default=None: {
         "api_key": "test_key",
+        "gemini_api_key": "gemini_key",
+        "gemini_model": "models/gemma-4-31b-it",
         "input_device_index": 0,
         "use_formatter": False,
         "formatter_model": "test_model",
-        "use_antigravity_proxy_search": False,
     }.get(key, default)
 
     with patch.object(controller, "_capture_selected_text", return_value="quixotic"), \
@@ -222,7 +241,8 @@ def test_start_transcription_search_always_uses_proxy(app, mock_deps):
 
     _, kwargs = mock_worker_cls.call_args
     assert kwargs["selected_text"] == "quixotic"
-    assert kwargs["search_client"] is controller.search_client
+    assert kwargs["gemini_client"] is controller.gemini
+    assert kwargs["gemini_model_id"] == "models/gemma-4-31b-it"
     mock_worker_inst.start.assert_called_once()
 
 def test_start_transcription_search_image_transcribes_before_capture(app, mock_deps):
@@ -230,10 +250,11 @@ def test_start_transcription_search_image_transcribes_before_capture(app, mock_d
     controller.recording_mode = "search_image"
     mock_deps["config"].get.side_effect = lambda key, default=None: {
         "api_key": "test_key",
+        "gemini_api_key": "gemini_key",
+        "gemini_model": "models/gemma-4-31b-it",
         "input_device_index": 0,
         "use_formatter": False,
         "formatter_model": "test_model",
-        "use_antigravity_proxy_search": True,
     }.get(key, default)
 
     with patch("src.controller.TranscriptionWorker") as mock_transcription_worker_cls:
@@ -242,30 +263,7 @@ def test_start_transcription_search_image_transcribes_before_capture(app, mock_d
 
     _, kwargs = mock_transcription_worker_cls.call_args
     assert kwargs["use_formatter"] is False
-    assert kwargs["format_model"] == "test_model"
-    mock_worker_inst.start.assert_called_once()
-
-def test_start_transcription_search_image_always_uses_proxy(app, mock_deps):
-    """Image search always uses proxy — no proxy-required notice needed."""
-    controller = WhisperAppController()
-    controller.recording_mode = "search_image"
-    mock_deps["config"].get.side_effect = lambda key, default=None: {
-        "api_key": "test_key",
-        "input_device_index": 0,
-        "use_formatter": False,
-        "formatter_model": "test_model",
-        "use_antigravity_proxy_search": False,
-    }.get(key, default)
-
-    with patch.object(controller, "_show_proxy_required_notice") as mock_notice, \
-         patch("src.controller.TranscriptionWorker") as mock_transcription_worker_cls:
-        mock_worker_inst = mock_transcription_worker_cls.return_value
-        controller.start_transcription("dummy.wav")
-
-    # Proxy required notice must NOT be shown — proxy is always enabled
-    mock_notice.assert_not_called()
-    # TranscriptionWorker should be created (first stage of image search)
-    mock_transcription_worker_cls.assert_called_once()
+    assert kwargs["format_model"] == "openai/gpt-oss-120b"
     mock_worker_inst.start.assert_called_once()
 
 def test_continue_image_search_pipeline_passes_query_and_image(app, mock_deps):
@@ -275,12 +273,13 @@ def test_continue_image_search_pipeline_passes_query_and_image(app, mock_deps):
     with patch.object(controller, "_capture_screen_region_png", return_value=fake_png), \
          patch("src.controller.SearchWorker") as mock_worker_cls:
         mock_worker_inst = mock_worker_cls.return_value
-        controller._continue_image_search_pipeline("what is this", "test_model", use_proxy_search=False)
+        controller._continue_image_search_pipeline("what is this")
 
     _, kwargs = mock_worker_cls.call_args
     assert kwargs["query_text"] == "what is this"
     assert kwargs["image_png_bytes"] == fake_png
-    assert kwargs["search_client"] is controller.search_client
+    assert kwargs["gemini_client"] is controller.gemini
+    assert kwargs["gemini_model_id"] == "models/gemma-4-31b-it"
     mock_worker_inst.start.assert_called_once()
 
 def test_on_config_changed_api_key_valid(app, mock_deps):
@@ -314,6 +313,30 @@ def test_on_config_changed_api_key_invalid(app, mock_deps):
     mock_deps["config"].save.assert_not_called()
     mock_deps["groq"].update_api_key.assert_not_called()
     mock_deps["window"].set_api_key_validation_result.assert_called_with(False, "The provided API key is invalid.")
+
+
+def test_on_config_changed_gemini_api_key_updates_client_and_models(app, mock_deps):
+    controller = WhisperAppController()
+    mock_deps["config"].set.reset_mock()
+    mock_deps["config"].save.reset_mock()
+    mock_deps["gemini"].update_api_key.reset_mock()
+    mock_deps["gemini"].list_models.return_value = ["models/gemma-4-31b-it"]
+
+    controller.on_config_changed("gemini_api_key", "AIza_new")
+
+    mock_deps["config"].set.assert_any_call("gemini_api_key", "AIza_new")
+    mock_deps["config"].save.assert_called()
+    mock_deps["gemini"].update_api_key.assert_called_once_with("AIza_new")
+    mock_deps["window"].set_gemini_model_list.assert_called_with(["models/gemma-4-31b-it"])
+
+
+def test_on_config_changed_gemini_model_persists(app, mock_deps):
+    controller = WhisperAppController()
+
+    controller.on_config_changed("gemini_model", "models/gemini-2.5-flash")
+
+    mock_deps["config"].set.assert_any_call("gemini_model", "models/gemini-2.5-flash")
+    mock_deps["config"].save.assert_called()
 
 def test_on_config_changed_animation_fps_updates_visualizer(app, mock_deps):
     controller = WhisperAppController()

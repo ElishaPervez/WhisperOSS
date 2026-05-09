@@ -15,7 +15,7 @@ from PyQt6.QtGui import QIcon, QAction, QCursor
 from src.config_manager import ConfigManager
 from src.audio_recorder import AudioRecorder
 from src.groq_client import GroqClient
-from src.proxy_search_client import ProxySearchClient
+from src.gemini_client import GeminiClient
 from src.hotkey_manager import HotkeyManager
 from src.ui_main_window import MainWindow
 from src.ui_onboarding import SetupMessageDialog, ApiKeyInputDialog
@@ -54,6 +54,7 @@ class WhisperAppController(QObject):
     _paste_completed_signal = pyqtSignal()
     _paste_failed_signal = pyqtSignal()
     _search_progress_signal = pyqtSignal(str)
+    _search_thought_signal = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -83,19 +84,12 @@ class WhisperAppController(QObject):
         self._paste_completed_signal.connect(self._on_paste_completed)
         self._paste_failed_signal.connect(self._on_paste_failed)
         self._search_progress_signal.connect(self._on_search_progress)
+        self._search_thought_signal.connect(self._on_search_thought_text)
 
         # Check for first run (no API key) and prompt before initializing
         self._check_first_run_api_key()
         self.groq = GroqClient(self.config.get("api_key"))
-        self.search_client = ProxySearchClient(
-            base_url=self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045"),
-            api_key=self.config.get("antigravity_api_key", ""),
-            primary_model=self.config.get("antigravity_search_model", "gemini-3-flash"),
-            fallback_model=self.config.get(
-                "antigravity_search_fallback_model", "gemini-2.5-flash"
-            ),
-            thinking_level=self.config.get("antigravity_thinking_level", "high"),
-        )
+        self.gemini = GeminiClient(self.config.get("gemini_api_key"))
         self.recorder = AudioRecorder(self.config.get("input_device_index"))
 
         # Standard Hotkey: Ctrl+Win (Transcribe)
@@ -282,6 +276,15 @@ class WhisperAppController(QObject):
             self.groq.update_api_key(new_key)
             self.refresh_models()
             self.window.set_api_key_validation_result(True, "API key validated and saved.")
+        elif key == "gemini_api_key":
+            new_key = str(value or "").strip()
+            self.config.set("gemini_api_key", new_key)
+            self.config.save()
+            self.gemini.update_api_key(new_key)
+            self.refresh_gemini_models()
+        elif key == "gemini_model":
+            self.config.set("gemini_model", str(value or "").strip())
+            self.config.save()
         elif key == "input_device_index":
             self.recorder.update_device(value)
         elif key == "animation_fps":
@@ -305,33 +308,6 @@ class WhisperAppController(QObject):
             self.config.set("stream_catch_up_enabled", enabled)
             self.config.save()
             self.visualizer.set_stream_catch_up_enabled(enabled)
-        elif key == "format_provider":
-            self.config.set(key, value)
-            self.config.save()
-            if value == "proxy":
-                self.refresh_proxy_formatter_models()
-        elif key in {
-            "use_antigravity_proxy_search",
-            "antigravity_proxy_url",
-            "antigravity_api_key",
-            "antigravity_search_model",
-            "antigravity_search_fallback_model",
-            "antigravity_thinking_level",
-        }:
-            self.config.set(key, value)
-            self.config.save()
-            self.search_client.update_config(
-                base_url=self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045"),
-                api_key=self.config.get("antigravity_api_key", ""),
-                primary_model=self.config.get("antigravity_search_model", "gemini-3-flash"),
-                fallback_model=self.config.get(
-                    "antigravity_search_fallback_model", "gemini-2.5-flash"
-                ),
-                thinking_level=self.config.get("antigravity_thinking_level", "high"),
-            )
-            # Refresh proxy formatter models when proxy connection details change
-            if key in {"antigravity_proxy_url", "antigravity_api_key"}:
-                self.refresh_proxy_formatter_models()
 
     def refresh_models(self) -> None:
         # In a real app, do this async
@@ -345,17 +321,16 @@ class WhisperAppController(QObject):
         else:
             self.window._set_error_status("API Key Invalid / Missing")
 
-        # Also refresh proxy formatter models if proxy is configured
-        self.refresh_proxy_formatter_models()
+        self.refresh_gemini_models()
 
-    def refresh_proxy_formatter_models(self) -> None:
-        """Fetch model list from Antigravity proxy and populate the UI."""
+    def refresh_gemini_models(self) -> None:
+        """Fetch Gemini model IDs and populate the UI when available."""
         try:
-            models = self.search_client.list_models()
+            models = self.gemini.list_models()
             if models:
-                self.window.set_proxy_formatter_model_list(models)
+                self.window.set_gemini_model_list(models)
         except Exception as e:
-            logger.debug("Could not fetch proxy models: %s", e)
+            logger.debug("Could not fetch Gemini models: %s", e)
 
     def toggle_recording(self) -> None:
         # Toggle state - Defaults to standard transcription mode if toggled via UI
@@ -436,21 +411,22 @@ class WhisperAppController(QObject):
             self.visualizer.begin_streaming_answer(reason="first streamed answer chunk")
         self.visualizer.update_streaming_answer(
             text,
-            reason="proxy streamed answer chunk",
+            reason="Gemini streamed answer chunk",
         )
 
-    def _show_proxy_required_notice(self) -> None:
-        notice = "Antigravity proxy needed for image context answer."
-        self.window.update_log(notice)
-        self.visualizer.set_processing_step(
-            "Antigravity proxy needed",
-            reason="image answer attempted while proxy search disabled",
+    def _on_search_thought_text(self, thought_text: str) -> None:
+        text = str(thought_text or "")
+        if not text or self._search_stream_started:
+            return
+        trace_widget_event(
+            "widget_thought_stream",
+            trigger="controller._on_search_thought_text",
+            reason="Gemini streamed thought chunk",
+            thought_preview=text[:160],
         )
-        QTimer.singleShot(
-            1600,
-            lambda: self.visualizer.cancel_processing(
-                reason="proxy required for image answer mode"
-            ),
+        self.visualizer.append_thinking_text(
+            text,
+            reason="Gemini streamed thought chunk",
         )
 
     def _position_visualizer_at_cursor(self) -> None:
@@ -580,14 +556,13 @@ class WhisperAppController(QObject):
         # Get common config
         use_fmt = self.config.get("use_formatter")
         fmt_model = self.config.get("formatter_model", "openai/gpt-oss-120b") # Default if missing
-        format_provider = self.config.get("format_provider", "groq")
-        proxy_fmt_model = self.config.get("proxy_formatter_model", "")
+        gemini_model_id = self.config.get("gemini_model", "models/gemma-4-31b-it")
 
         if self.recording_mode in {"search", "search_image"}:
-            # Quick Answer Mode — always uses Antigravity proxy.
+            # Quick Answer Mode — always uses Gemini.
             self._search_stream_started = False
             if self.recording_mode == "search_image":
-                self._start_image_search_pipeline(audio_source, fmt_model, True)
+                self._start_image_search_pipeline(audio_source)
                 return
 
             self.visualizer.set_processing_step(
@@ -596,19 +571,19 @@ class WhisperAppController(QObject):
             )
             selected_text = self._capture_selected_text()
             logger.info(
-                "Starting Quick Answer search (Provider: Antigravity Proxy, Refiner: %s, SelectedContext: %s, ImageContext: no)...",
-                fmt_model,
+                "Starting Quick Answer search (Provider: Gemini, Model: %s, SelectedContext: %s, ImageContext: no)...",
+                gemini_model_id,
                 "yes" if selected_text else "no",
             )
-            # Reuse the formatter model (High Intelligence) for refinement
             self.worker = SearchWorker(
                 self.groq,
                 audio_source,
-                refinement_model_id=fmt_model,
-                search_client=self.search_client,
+                gemini_client=self.gemini,
+                gemini_model_id=gemini_model_id,
                 selected_text=selected_text,
             )
             self.worker.progress.connect(self._search_progress_signal.emit)
+            self.worker.thought_text.connect(self._search_thought_signal.emit)
             self.worker.stream_text.connect(self._on_search_stream_text)
             self.worker.finished.connect(self.on_search_complete)
             self.worker.error.connect(self.show_error)
@@ -624,22 +599,15 @@ class WhisperAppController(QObject):
             # Get active window context for context intelligence
             active_context = get_active_window_title()
 
-            # Determine formatting backend
-            proxy_format_client = None
-            if use_fmt and format_provider == "proxy":
-                proxy_format_client = self.search_client
-
             logger.info(
-                "Starting transcription: fmt=%s, provider=%s, trans=%s, lang=%s, style=%s, context=%s",
-                use_fmt, format_provider, use_trans, target_lang, fmt_style, active_context,
+                "Starting transcription: fmt=%s, trans=%s, lang=%s, style=%s, context=%s",
+                use_fmt, use_trans, target_lang, fmt_style, active_context,
             )
 
             self.worker = TranscriptionWorker(
                 self.groq, audio_source, use_fmt, fmt_model,
                 use_translation=use_trans, target_language=target_lang,
                 formatting_style=fmt_style, active_context=active_context,
-                proxy_format_client=proxy_format_client,
-                proxy_format_model=proxy_fmt_model,
             )
             self.worker.finished.connect(self.on_transcription_complete)
             self.worker.error.connect(self.show_error)
@@ -648,8 +616,6 @@ class WhisperAppController(QObject):
     def _start_image_search_pipeline(
         self,
         audio_source: Any,
-        refinement_model_id: str,
-        use_proxy_search: bool,
     ) -> None:
         """Search-image mode: first transcribe speech, then capture image context."""
         self.visualizer.set_processing_step(
@@ -661,13 +627,11 @@ class WhisperAppController(QObject):
             self.groq,
             audio_source,
             use_formatter=False,
-            format_model=refinement_model_id,
+            format_model="openai/gpt-oss-120b",
         )
         self.worker.finished.connect(
             lambda raw_text, _final_text: self._continue_image_search_pipeline(
                 raw_text,
-                refinement_model_id,
-                use_proxy_search,
             )
         )
         self.worker.error.connect(self.show_error)
@@ -676,8 +640,6 @@ class WhisperAppController(QObject):
     def _continue_image_search_pipeline(
         self,
         raw_text: str,
-        refinement_model_id: str,
-        use_proxy_search: bool,
     ) -> None:
         """Continue search-image mode once speech has been transcribed."""
         query_text = (raw_text or "").strip()
@@ -696,22 +658,21 @@ class WhisperAppController(QObject):
             self.visualizer.cancel_processing(reason="image selection canceled")
             return
 
-        use_proxy_for_request = use_proxy_search or (image_png_bytes is not None)
-        provider_name = "Antigravity Proxy" if use_proxy_for_request else "Groq Compound"
+        gemini_model_id = self.config.get("gemini_model", "models/gemma-4-31b-it")
         logger.info(
-            "Starting Quick Answer search (Provider: %s, Refiner: %s, SelectedContext: no, ImageContext: yes)...",
-            provider_name,
-            refinement_model_id,
+            "Starting Quick Answer search (Provider: Gemini, Model: %s, SelectedContext: no, ImageContext: yes)...",
+            gemini_model_id,
         )
         self.worker = SearchWorker(
             self.groq,
             None,
-            refinement_model_id=refinement_model_id,
-            search_client=self.search_client if use_proxy_for_request else None,
+            gemini_client=self.gemini,
+            gemini_model_id=gemini_model_id,
             query_text=query_text,
             image_png_bytes=image_png_bytes,
         )
         self.worker.progress.connect(self._search_progress_signal.emit)
+        self.worker.thought_text.connect(self._search_thought_signal.emit)
         self.worker.stream_text.connect(self._on_search_stream_text)
         self.worker.finished.connect(self.on_search_complete)
         self.worker.error.connect(self.show_error)

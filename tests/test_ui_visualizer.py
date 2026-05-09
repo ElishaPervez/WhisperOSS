@@ -118,6 +118,67 @@ def test_processing_step_short_text_keeps_compact_min_width(app, qtbot):
 
     assert vis.width() >= vis.COMPACT_WIDTH
 
+
+def test_thinking_text_shows_smooth_marquee_overlay(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+    vis.set_processing_mode("Sending API request")
+
+    vis.append_thinking_text("I will compare the search results before answering. ")
+    qtbot.wait(90)
+
+    assert vis._thinking_visible is True
+    assert vis._thinking_marquee.isVisible() is True
+    assert vis._visualizer.isVisible() is False
+    assert vis.width() >= vis.THINKING_MIN_WIDTH
+    assert vis.width() <= vis.THINKING_MAX_WIDTH
+    assert vis.height() == vis.THINKING_HEIGHT
+    assert vis._thinking_marquee.SCROLL_PX_PER_SECOND >= 180.0
+    assert "compare the search results" in vis._thinking_marquee.thinking_text()
+    first_offset = vis._thinking_marquee.scroll_offset()
+
+    qtbot.wait(140)
+
+    assert vis._thinking_marquee.scroll_offset() > first_offset
+
+
+def test_streaming_answer_morphs_from_thinking_overlay(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+    vis.set_processing_mode("Sending API request")
+    vis.append_thinking_text("I am checking sources. ")
+
+    vis.begin_streaming_answer()
+
+    assert vis._thinking_answer_morph_active is True
+    assert vis._thinking_marquee.isVisible() is True
+    assert vis._answer_card.isVisible() is False
+    assert vis._thinking_marquee.morph_progress() == 0.0
+
+    qtbot.wait(260)
+
+    assert 0.0 < vis._thinking_marquee.morph_progress() < 1.0
+
+    qtbot.wait(520)
+
+    assert vis._thinking_answer_morph_active is False
+    assert vis._thinking_marquee.isVisible() is False
+    assert vis._answer_card.isVisible() is True
+
+
+def test_streaming_answer_without_thinking_uses_direct_answer_card(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+    vis.set_processing_mode("Sending API request")
+
+    vis.begin_streaming_answer()
+
+    assert vis._thinking_answer_morph_active is False
+    assert vis._answer_card.isVisible() is True
+
 def test_listening_mode_resets_compact_geometry_after_processing(app, qtbot):
     vis = AudioVisualizer()
     qtbot.addWidget(vis)
@@ -211,8 +272,9 @@ def test_markdown_answer_renders_in_markdown_mode(app, qtbot):
     qtbot.wait(620)
 
     assert vis._answer_visible is True
-    assert vis._answer_label.textFormat() == Qt.TextFormat.MarkdownText
-    assert vis._answer_label.text() == answer
+    assert vis._answer_label.textFormat() == Qt.TextFormat.RichText
+    assert "<strong>Meaning</strong>" in vis._answer_label.text()
+    assert "Remember Me" in vis._answer_label.text()
 
 
 def test_markdown_answer_normalizes_malformed_bold_spacing(app, qtbot):
@@ -225,7 +287,35 @@ def test_markdown_answer_normalizes_malformed_bold_spacing(app, qtbot):
     qtbot.wait(620)
 
     assert vis._answer_visible is True
-    assert vis._answer_label.text() == "These are **Hina Choso** and **Chinatsu Kano** from Blue Box."
+    assert "<strong>Hina Choso</strong>" in vis._answer_label.text()
+    assert "<strong>Chinatsu Kano</strong>" in vis._answer_label.text()
+    assert "**" not in vis._answer_label.text()
+
+
+def test_streaming_answer_hides_markdown_markers_during_overlap_reveal(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+    vis.set_processing_mode("Sending API request")
+    vis.set_stream_realtime_enabled(False)
+    vis.set_stream_reveal_wps(2)
+
+    text = "This is **Marques Brownlee**, better known as **MKBHD**."
+    vis.begin_streaming_answer()
+    vis.update_streaming_answer(text)
+    vis._streaming_reveal_carry = 5.0
+    vis._tick_streaming_answer_frame()
+
+    rendered = vis._answer_label.text()
+
+    assert "<strong>Marques Brownlee</strong>" in rendered
+    assert "**" not in rendered
+
+    vis.complete_streaming_answer(text)
+    qtbot.wait(2200)
+
+    assert "<strong>MKBHD</strong>" in vis._answer_label.text()
+    assert "**" not in vis._answer_label.text()
 
 
 def test_streaming_answer_auto_dismiss_starts_only_after_completion(app, qtbot):
@@ -257,7 +347,9 @@ def test_streaming_answer_normalizes_malformed_bold_spacing(app, qtbot):
     vis.complete_streaming_answer("These are ** Hina Choso ** and ** Chinatsu Kano**.")
     qtbot.wait(3600)
 
-    assert vis._answer_label.text() == "These are **Hina Choso** and **Chinatsu Kano**."
+    assert "<strong>Hina Choso</strong>" in vis._answer_label.text()
+    assert "<strong>Chinatsu Kano</strong>" in vis._answer_label.text()
+    assert "**" not in vis._answer_label.text()
 
 
 def test_streaming_answer_dismiss_ignores_future_updates(app, qtbot):
@@ -284,7 +376,7 @@ def test_streaming_answer_reveals_progressively_before_completion(app, qtbot):
     vis.show()
     vis.set_processing_mode("Sending API request")
     vis.set_stream_realtime_enabled(False)
-    vis.set_stream_reveal_wps(8)
+    vis.set_stream_reveal_wps(2)
 
     text = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
     vis.begin_streaming_answer()
@@ -296,9 +388,48 @@ def test_streaming_answer_reveals_progressively_before_completion(app, qtbot):
     assert len(vis._answer_label.text().strip()) > 0
 
     vis.complete_streaming_answer(text)
-    qtbot.wait(1700)
+    qtbot.wait(3200)
     assert vis._answer_label.text() == text
     assert vis._auto_dismiss_timer.isActive() is True
+
+
+def test_streaming_answer_overlaps_word_fade_reveal(app, qtbot):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis.show()
+    vis.set_processing_mode("Sending API request")
+    vis.set_stream_realtime_enabled(False)
+    vis.set_stream_reveal_wps(2)
+
+    text = "alpha beta gamma"
+    vis.begin_streaming_answer()
+    vis.update_streaming_answer(text)
+
+    step_ms = vis._streaming_word_step_ms(backlog_segments=3)
+    before_overlap = vis._streaming_segment_reveal_opacities(0.49, step_ms, 3)
+    assert before_overlap[0] == pytest.approx(0.49, abs=0.02)
+    assert before_overlap[1] == 0.0
+
+    overlap = vis._streaming_segment_reveal_opacities(0.75, step_ms, 3)
+    assert overlap[0] == pytest.approx(0.75, abs=0.02)
+    assert overlap[1] == pytest.approx(0.25, abs=0.02)
+    assert overlap[2] == 0.0
+
+    first_complete = vis._streaming_segment_reveal_opacities(1.0, step_ms, 3)
+    assert first_complete[0] == 1.0
+    assert first_complete[1] == pytest.approx(0.50, abs=0.02)
+
+    vis._streaming_reveal_carry = 0.55
+    vis._tick_streaming_answer_frame()
+    rendered = vis._answer_label.text()
+    generated = vis._render_streaming_segments_with_opacity(
+        vis._streaming_segment_reveal_opacities(0.55, step_ms, 3)
+    )
+
+    assert "alpha" in rendered
+    assert "beta" in rendered
+    assert "rgba(248, 249, 251" in generated
+    assert vis._answer_label.textFormat() == Qt.TextFormat.RichText
 
 
 def test_streaming_answer_realtime_mode_tracks_arrived_text_immediately(app, qtbot):
@@ -364,6 +495,39 @@ def test_answer_rect_remeasures_after_tall_answer_without_stale_height_cache(app
     short_rect = vis._answer_rect_for_reference(reference, short_answer)
 
     assert short_rect.height() < tall_rect.height()
+
+
+def test_answer_rect_remeasures_when_final_card_width_grows(app, qtbot, monkeypatch):
+    vis = AudioVisualizer()
+    qtbot.addWidget(vis)
+    vis._screen_geometry_for_rect = lambda _: QRect(0, 0, 1200, 800)
+
+    measured_widths = []
+
+    monkeypatch.setattr(vis, "_pick_text_width", lambda _text, _max_width: 120)
+
+    def fake_measure(_text, width):
+        measured_widths.append(width)
+        return 150 if width <= 120 else 90
+
+    monkeypatch.setattr(vis, "_measure_rendered_label_height", fake_measure)
+
+    reference = QRect(100, 100, vis.COMPACT_WIDTH, vis.COMPACT_HEIGHT)
+    rect = vis._answer_rect_for_reference(reference, "short answer")
+
+    layout = vis._answer_card.layout()
+    margins = layout.contentsMargins()
+    vertical_padding = margins.top() + margins.bottom()
+    button_height = vis._seen_button.sizeHint().height()
+    button_row_height = max(24, button_height) + layout.spacing() + 6
+
+    expected_height = max(
+        vis.CARD_MIN_HEIGHT,
+        vertical_padding + button_row_height + (90 + (vis._answer_surface_vpad * 2)),
+    )
+
+    assert measured_widths[-1] > 120
+    assert rect.height() == expected_height
 
 
 def test_streaming_answer_growth_keeps_center_anchor(app, qtbot):

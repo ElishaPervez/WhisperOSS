@@ -53,23 +53,6 @@ FORMATTING RULES:
 # The model will mimic the punctuation, capitalization, and style shown here.
 TRANSCRIPTION_PROMPT = """Hello, welcome. I'm going to dictate some text now. Please transcribe it accurately with proper punctuation and capitalization. Here's what I'd like to say:"""
 
-SYSTEM_PROMPT_REFINE = """You are a query refinement engine.
-Your task is to take a raw spoken query and refine it into a clear, concise search query for a search engine.
-
-INPUT FORMAT:
-- Most requests are plain text spoken queries.
-- Some requests are structured with two fields:
-  Spoken: <what the user said>
-  Selected: <text currently selected by the user>
-
-STRICT RULES:
-1.  **REMOVE FILLER**: Remove conversational filler ("um", "uh", "I want to know").
-2.  **CLARIFY**: correct any obvious transcription errors.
-3.  **USE SELECTED CONTEXT**: If a Selected field is present, use it to disambiguate references like "this", "it", "that word", "this term", or unclear pronunciations.
-4.  **KEEP SEPARATION**: Treat Selected content as context only. Do not copy labels like "Spoken:" or "Selected:" into output.
-5.  **CONCISE**: Output ONLY the refined search query. No quotes, no explanations.
-"""
-
 SYSTEM_PROMPT_SEARCH = """You are a concise factual assistant for general information tasks.
 Your goal is to provide accurate answers with minimal wording and specialized, already-solved guidance.
 

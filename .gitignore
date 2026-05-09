@@ -25,6 +25,10 @@ config.json
 .whispeross/
 *.wav
 debug.txt
+output/
+
+# AI Tool Files
+.codex
 
 # IDEs
 .vscode/

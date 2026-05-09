@@ -1,11 +1,34 @@
 import json
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 
 _LOGGER_NAME = "whispeross.widget_debug"
-_DEFAULT_PATH = Path(__file__).resolve().parents[1] / "debug.txt"
+
+
+def _default_debug_path() -> Path:
+    # When bundled by PyInstaller, __file__ lives inside a temp _MEIPASS folder
+    # (onefile) or inside the _internal/ dir (onedir). Neither is a good place
+    # to write debug.txt. Prefer next to the exe if writable, else %APPDATA%.
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        try:
+            probe = exe_dir / ".whispeross_write_probe"
+            probe.touch(exist_ok=True)
+            probe.unlink(missing_ok=True)
+            return exe_dir / "debug.txt"
+        except OSError:
+            app_data = os.getenv("APPDATA")
+            base = Path(app_data) / "WhisperOSS" if app_data else Path.home() / ".whispeross"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / "debug.txt"
+    return Path(__file__).resolve().parents[1] / "debug.txt"
+
+
+_DEFAULT_PATH = _default_debug_path()
 _initialized = False
 _current_path: Optional[Path] = None
 

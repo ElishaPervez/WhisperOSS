@@ -47,6 +47,8 @@ def test_load_default_config():
         manager = ConfigManager(config_file=config_file)
 
     assert manager.get("api_key") == ""
+    assert manager.get("gemini_api_key") == ""
+    assert manager.get("gemini_model") == "models/gemma-4-31b-it"
     assert manager.get("appearance_mode") == "auto"
     assert manager.get("animation_fps") == 100
     assert manager.get("stream_realtime_enabled") is True
@@ -72,6 +74,25 @@ def test_secure_storage_set_scrubs_config_file():
     with patch("src.config_manager.ApiKeyStore", return_value=fake_store):
         new_manager = ConfigManager(config_file=config_file)
     assert new_manager.get("api_key") == "secret_key"
+    _cleanup_test_config_file(config_file)
+
+
+def test_secure_storage_set_scrubs_gemini_key_from_config_file():
+    """Gemini API key should also live in secure storage when available."""
+    config_file = _new_test_config_file()
+
+    stores = [FakeSecureStore(available=True), FakeSecureStore(available=True)]
+    with patch("src.config_manager.ApiKeyStore", side_effect=stores):
+        manager = ConfigManager(config_file=config_file)
+        manager.set("gemini_api_key", "AIza_secret")
+        manager.save()
+
+    disk_data = json.loads(config_file.read_text(encoding="utf-8"))
+    assert disk_data.get("gemini_api_key", "") == ""
+
+    with patch("src.config_manager.ApiKeyStore", side_effect=stores):
+        new_manager = ConfigManager(config_file=config_file)
+    assert new_manager.get("gemini_api_key") == "AIza_secret"
     _cleanup_test_config_file(config_file)
 
 

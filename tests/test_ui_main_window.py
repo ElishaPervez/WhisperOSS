@@ -9,6 +9,8 @@ def mock_config():
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: {
         "api_key": "test_key",
+        "gemini_api_key": "AIza_test",
+        "gemini_model": "models/gemma-4-31b-it",
         "use_formatter": False,
         "input_device_index": 0,
         "formatter_model": "test_model"
@@ -153,53 +155,46 @@ def test_api_key_empty_shows_error(app, qtbot, mock_config):
     assert window.api_key_hint.text() == "Enter a valid Groq API key."
     assert window.api_key_save_btn.isEnabled() is True
 
-def test_proxy_toggle_emits_config_changed_and_reveals_setup(app, qtbot, mock_config):
+def test_gemini_settings_are_present_and_proxy_controls_removed(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     window.show()
-    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
-    assert window.proxy_url_input.isEnabled() is False
 
-    with qtbot.waitSignal(window.config_changed) as blocker:
-        window.proxy_search_toggle.setChecked(True)
+    assert window.gemini_api_key_input.text() == "AIza_test"
+    assert window.gemini_model_combo.currentText() == "models/gemma-4-31b-it"
+    assert not hasattr(window, "proxy_search_toggle")
+    assert not hasattr(window, "proxy_url_input")
+    assert not hasattr(window, "proxy_model_input")
 
-    assert blocker.args[0] == "use_antigravity_proxy_search"
-    assert blocker.args[1] is True
-    assert window.proxy_url_input.isEnabled() is True
-    mock_config.set.assert_any_call("use_antigravity_proxy_search", True)
-    mock_config.save.assert_called()
-
-def test_proxy_url_change_emits_config_changed(app, qtbot, mock_config):
+def test_gemini_api_key_change_emits_config_changed(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     window.show()
-    window.proxy_search_toggle.setChecked(True)
 
     with qtbot.waitSignal(window.config_changed) as blocker:
-        window.proxy_url_input.setText("http://127.0.0.1:9000")
-        window.on_proxy_url_changed()
+        window.gemini_api_key_input.setText("AIza_new")
+        window.on_gemini_api_key_changed()
 
-    assert blocker.args[0] == "antigravity_proxy_url"
-    assert blocker.args[1] == "http://127.0.0.1:9000"
+    assert blocker.args[0] == "gemini_api_key"
+    assert blocker.args[1] == "AIza_new"
 
-def test_proxy_thinking_level_change_emits_normalized_config(app, qtbot, mock_config):
+def test_gemini_model_change_emits_config_changed(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     window.show()
-    window.proxy_search_toggle.setChecked(True)
 
     with qtbot.waitSignal(window.config_changed) as blocker:
-        window.proxy_thinking_combo.setCurrentText("Low")
+        window.gemini_model_combo.setCurrentText("models/gemini-2.5-flash")
 
-    assert blocker.args[0] == "antigravity_thinking_level"
-    assert blocker.args[1] == "low"
+    assert blocker.args[0] == "gemini_model"
+    assert blocker.args[1] == "models/gemini-2.5-flash"
 
 
 def test_stream_realtime_toggle_emits_and_locks_slider(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     window.show()
-    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+    window.settings_tabs.setCurrentIndex(2)  # Search tab
 
     assert window.stream_realtime_toggle.isChecked() is True
     assert window.stream_reveal_speed_slider.isEnabled() is False
@@ -220,7 +215,7 @@ def test_stream_reveal_speed_change_emits_config_changed(app, qtbot, mock_config
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     window.show()
-    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+    window.settings_tabs.setCurrentIndex(2)  # Search tab
     window.stream_realtime_toggle.setChecked(False)
     mock_config.set.reset_mock()
     mock_config.save.reset_mock()
@@ -239,7 +234,7 @@ def test_stream_catch_up_toggle_emits_config_changed(app, qtbot, mock_config):
     window = MainWindow(mock_config)
     qtbot.addWidget(window)
     window.show()
-    window.settings_tabs.setCurrentIndex(2)  # Advanced tab
+    window.settings_tabs.setCurrentIndex(2)  # Search tab
     window.stream_realtime_toggle.setChecked(False)
     mock_config.set.reset_mock()
     mock_config.save.reset_mock()

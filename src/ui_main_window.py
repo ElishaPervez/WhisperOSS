@@ -305,10 +305,6 @@ class MainWindow(QWidget):
             fps = 100
         return max(30, min(240, fps))
 
-    def _normalize_proxy_thinking_level(self, value):
-        normalized = str(value or "high").strip().lower()
-        return normalized if normalized in {"high", "medium", "low", "none"} else "high"
-
     def _normalize_stream_reveal_wps(self, value):
         try:
             parsed = int(value)
@@ -625,6 +621,29 @@ class MainWindow(QWidget):
                 max-height: 1px;
                 background: rgba(148, 163, 184, 0.34);
             }
+
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 6px;
+                margin: 2px 2px 2px 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(148, 163, 184, 0.6);
+                border-radius: 3px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(100, 116, 139, 0.8);
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
             """
 
         dark_overrides = """
@@ -824,6 +843,13 @@ class MainWindow(QWidget):
             QFrame#Divider {
                 background: rgba(57, 83, 120, 0.88);
             }
+
+            QScrollBar::handle:vertical {
+                background: rgba(75, 107, 158, 0.7);
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(100, 140, 200, 0.9);
+            }
             """
 
         self.setStyleSheet(base_stylesheet + (dark_overrides if self._is_dark_theme else ""))
@@ -989,7 +1015,7 @@ class MainWindow(QWidget):
         self.settings_tabs = QTabWidget()
         self.settings_tabs.setObjectName("SettingsTabs")
         self.settings_tabs.setDocumentMode(True)
-        self.settings_tabs.tabBar().setExpanding(True)
+        self.settings_tabs.tabBar().setExpanding(False)
         self.settings_tabs.tabBar().setUsesScrollButtons(False)
         self.settings_tabs.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
         self.settings_tabs.tabBar().setDrawBase(False)
@@ -1074,27 +1100,11 @@ class MainWindow(QWidget):
         formatter_row.addWidget(self.format_toggle)
         pipeline_layout.addLayout(formatter_row)
 
-        self.format_provider_label = QLabel("Format Provider")
-        pipeline_layout.addWidget(self.format_provider_label)
-        self.format_provider_combo = QComboBox()
-        self.format_provider_combo.addItems(["Groq", "Antigravity Proxy"])
-        self.format_provider_combo.currentTextChanged.connect(self.on_format_provider_changed)
-        pipeline_layout.addWidget(self.format_provider_combo)
-
         self.model_label = QLabel("Formatter Model")
         pipeline_layout.addWidget(self.model_label)
         self.model_combo = QComboBox()
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
         pipeline_layout.addWidget(self.model_combo)
-
-        # Editable combo for proxy formatter model (user can type any model ID)
-        self.proxy_formatter_model_label = QLabel("Proxy Formatter Model")
-        pipeline_layout.addWidget(self.proxy_formatter_model_label)
-        self.proxy_formatter_model_combo = QComboBox()
-        self.proxy_formatter_model_combo.setEditable(True)
-        self.proxy_formatter_model_combo.lineEdit().setPlaceholderText("e.g. gemini-3-pro-high")
-        self.proxy_formatter_model_combo.currentTextChanged.connect(self.on_proxy_formatter_model_changed)
-        pipeline_layout.addWidget(self.proxy_formatter_model_combo)
 
         casual_row = QHBoxLayout()
         casual_label = QLabel("Casual Mode")
@@ -1171,23 +1181,49 @@ class MainWindow(QWidget):
         advanced_tab.setWidgetResizable(True)
         advanced_tab.setFrameShape(QFrame.Shape.NoFrame)
         advanced_tab.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        advanced_tab.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         advanced_page = QWidget()
         advanced_layout = QVBoxLayout(advanced_page)
-        advanced_layout.setContentsMargins(8, 10, 8, 8)
+        advanced_layout.setContentsMargins(8, 10, 12, 8)
         advanced_layout.setSpacing(12)
 
-        proxy_row = QHBoxLayout()
-        self.proxy_search_label = QLabel("Antigravity Proxy (Search)")
-        self.proxy_search_toggle = AnimatedToggle()
-        self.proxy_search_toggle.setChecked(
-            bool(self.config.get("use_antigravity_proxy_search", False))
+        gemini_caption = QLabel("Gemini Search")
+        gemini_caption.setObjectName("SectionCaption")
+        advanced_layout.addWidget(gemini_caption)
+
+        advanced_layout.addWidget(QLabel("Gemini API Key"))
+        gemini_api_row = QHBoxLayout()
+        gemini_api_row.setSpacing(8)
+        self.gemini_api_key_input = QLineEdit()
+        self.gemini_api_key_input.setPlaceholderText("AIza...")
+        self.gemini_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.gemini_api_key_input.setText(self.config.get("gemini_api_key", ""))
+        self.gemini_api_key_input.editingFinished.connect(self.on_gemini_api_key_changed)
+        gemini_api_row.addWidget(self.gemini_api_key_input, 1)
+        self.gemini_api_key_toggle_btn = QPushButton("Show")
+        self.gemini_api_key_toggle_btn.setObjectName("SoftButton")
+        self.gemini_api_key_toggle_btn.setFixedWidth(76)
+        self.gemini_api_key_toggle_btn.clicked.connect(self.on_gemini_api_key_toggle_visibility)
+        gemini_api_row.addWidget(self.gemini_api_key_toggle_btn)
+        advanced_layout.addLayout(gemini_api_row)
+
+        advanced_layout.addWidget(QLabel("Gemini Search Model"))
+        self.gemini_model_combo = QComboBox()
+        self.gemini_model_combo.setEditable(True)
+        self.gemini_model_combo.lineEdit().setPlaceholderText("models/gemma-4-31b-it")
+        self.gemini_model_combo.setCurrentText(
+            self.config.get("gemini_model", "models/gemma-4-31b-it")
         )
-        self.proxy_search_toggle.stateChanged.connect(self.on_proxy_search_toggle_changed)
-        proxy_row.addWidget(self.proxy_search_label)
-        proxy_row.addStretch()
-        proxy_row.addWidget(self.proxy_search_toggle)
-        advanced_layout.addLayout(proxy_row)
+        self.gemini_model_combo.currentTextChanged.connect(self.on_gemini_model_changed)
+        advanced_layout.addWidget(self.gemini_model_combo)
+
+        gemini_hint = QLabel(
+            "Quick Answer and image-question mode use the official Gemini API with Google Search grounding."
+        )
+        gemini_hint.setObjectName("MutedText")
+        gemini_hint.setWordWrap(True)
+        advanced_layout.addWidget(gemini_hint)
 
         stream_realtime_row = QHBoxLayout()
         self.stream_realtime_label = QLabel("Real-time Streaming")
@@ -1235,114 +1271,10 @@ class MainWindow(QWidget):
         stream_catchup_row.addStretch()
         stream_catchup_row.addWidget(self.stream_catch_up_toggle)
         advanced_layout.addLayout(stream_catchup_row)
-
-        # Collapsible instructions panel with animation + internal scrolling.
-        self.proxy_setup_container = QFrame()
-        self.proxy_setup_container.setObjectName("ProxyHelp")
-        self.proxy_setup_container.setMaximumHeight(0)
-        self.proxy_setup_container.setMinimumHeight(0)
-        proxy_setup_outer = QVBoxLayout(self.proxy_setup_container)
-        proxy_setup_outer.setContentsMargins(8, 8, 8, 8)
-        proxy_setup_outer.setSpacing(0)
-
-        self.proxy_setup_scroll = QScrollArea()
-        self.proxy_setup_scroll.setObjectName("ProxyHelpScroll")
-        self.proxy_setup_scroll.setWidgetResizable(True)
-        self.proxy_setup_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.proxy_setup_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.proxy_setup_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        proxy_setup_content = QWidget()
-        proxy_setup_content_layout = QVBoxLayout(proxy_setup_content)
-        proxy_setup_content_layout.setContentsMargins(0, 0, 0, 0)
-        proxy_setup_content_layout.setSpacing(0)
-        self.proxy_setup_hint = QLabel(
-            "Advanced mode. Not out-of-the-box.\n"
-            "Setup steps:\n"
-            "1) Install and run Antigravity Manager (proxy) locally.\n"
-            "2) Start the proxy and keep it reachable (default: http://127.0.0.1:8045).\n"
-            "3) Enable MCP Web Search in Antigravity Manager.\n"
-            "4) Paste the proxy API key below and choose search-capable models."
-        )
-        self.proxy_setup_hint.setObjectName("ApiHint")
-        self.proxy_setup_hint.setProperty("state", "error")
-        self.proxy_setup_hint.setWordWrap(True)
-        proxy_setup_content_layout.addWidget(self.proxy_setup_hint)
-        self.proxy_setup_scroll.setWidget(proxy_setup_content)
-        proxy_setup_outer.addWidget(self.proxy_setup_scroll)
-        advanced_layout.addWidget(self.proxy_setup_container)
-
-        self.proxy_setup_anim = QPropertyAnimation(self.proxy_setup_container, b"maximumHeight", self)
-        self.proxy_setup_anim.setDuration(220)
-        self.proxy_setup_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        self.proxy_url_label = QLabel("Proxy Base URL")
-        advanced_layout.addWidget(self.proxy_url_label)
-        self.proxy_url_input = QLineEdit()
-        self.proxy_url_input.setPlaceholderText("http://127.0.0.1:8045")
-        self.proxy_url_input.setText(self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045"))
-        self.proxy_url_input.editingFinished.connect(self.on_proxy_url_changed)
-        advanced_layout.addWidget(self.proxy_url_input)
-
-        self.proxy_api_key_label = QLabel("Proxy API Key")
-        advanced_layout.addWidget(self.proxy_api_key_label)
-        proxy_api_row = QHBoxLayout()
-        proxy_api_row.setSpacing(8)
-        self.proxy_api_key_input = QLineEdit()
-        self.proxy_api_key_input.setPlaceholderText("Optional proxy API key")
-        self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.proxy_api_key_input.setText(self.config.get("antigravity_api_key", ""))
-        self.proxy_api_key_input.editingFinished.connect(self.on_proxy_api_key_changed)
-        proxy_api_row.addWidget(self.proxy_api_key_input, 1)
-        self.proxy_api_key_toggle_btn = QPushButton("Show")
-        self.proxy_api_key_toggle_btn.setObjectName("SoftButton")
-        self.proxy_api_key_toggle_btn.setFixedWidth(76)
-        self.proxy_api_key_toggle_btn.clicked.connect(self.on_proxy_api_key_toggle_visibility)
-        proxy_api_row.addWidget(self.proxy_api_key_toggle_btn)
-        advanced_layout.addLayout(proxy_api_row)
-
-        self.proxy_model_label = QLabel("Proxy Search Model")
-        advanced_layout.addWidget(self.proxy_model_label)
-        self.proxy_model_input = QLineEdit()
-        self.proxy_model_input.setPlaceholderText("gemini-3-flash")
-        self.proxy_model_input.setText(self.config.get("antigravity_search_model", "gemini-3-flash"))
-        self.proxy_model_input.editingFinished.connect(self.on_proxy_model_changed)
-        advanced_layout.addWidget(self.proxy_model_input)
-
-        self.proxy_fallback_model_label = QLabel("Proxy Fallback Model")
-        advanced_layout.addWidget(self.proxy_fallback_model_label)
-        self.proxy_fallback_model_input = QLineEdit()
-        self.proxy_fallback_model_input.setPlaceholderText("gemini-2.5-flash")
-        self.proxy_fallback_model_input.setText(
-            self.config.get("antigravity_search_fallback_model", "gemini-2.5-flash")
-        )
-        self.proxy_fallback_model_input.editingFinished.connect(
-            self.on_proxy_fallback_model_changed
-        )
-        advanced_layout.addWidget(self.proxy_fallback_model_input)
-
-        self.proxy_thinking_label = QLabel("Proxy Thinking Level")
-        advanced_layout.addWidget(self.proxy_thinking_label)
-        self.proxy_thinking_combo = QComboBox()
-        self.proxy_thinking_combo.addItems(["High", "Medium", "Low", "None"])
-        thinking_level = self._normalize_proxy_thinking_level(
-            self.config.get("antigravity_thinking_level", "high")
-        )
-        thinking_labels = {
-            "high": "High",
-            "medium": "Medium",
-            "low": "Low",
-            "none": "None",
-        }
-        self.proxy_thinking_combo.setCurrentText(thinking_labels[thinking_level])
-        self.proxy_thinking_combo.currentTextChanged.connect(
-            self.on_proxy_thinking_level_changed
-        )
-        advanced_layout.addWidget(self.proxy_thinking_combo)
         advanced_layout.addStretch()
 
         advanced_tab.setWidget(advanced_page)
-        self.settings_tabs.addTab(advanced_tab, "Advanced")
+        self.settings_tabs.addTab(advanced_tab, "Search")
 
         # Appearance tab
         appearance_tab = QWidget()
@@ -1476,12 +1408,9 @@ class MainWindow(QWidget):
     def _persist_force_save_settings(self):
         self.config.set("input_device_index", self.device_combo.currentData())
         self.config.set("use_formatter", self.format_toggle.isChecked())
-        self.config.set(
-            "format_provider",
-            "proxy" if self.format_provider_combo.currentText() == "Antigravity Proxy" else "groq",
-        )
         self.config.set("formatter_model", self.model_combo.currentText().strip())
-        self.config.set("proxy_formatter_model", self.proxy_formatter_model_combo.currentText().strip())
+        self.config.set("gemini_api_key", self.gemini_api_key_input.text().strip())
+        self.config.set("gemini_model", self.gemini_model_combo.currentText().strip())
         self.config.set("casual_mode", self.casual_toggle.isChecked())
         self.config.set(
             "translation_enabled",
@@ -1496,19 +1425,6 @@ class MainWindow(QWidget):
             self._normalize_stream_reveal_wps(self.stream_reveal_speed_slider.value()),
         )
         self.config.set("stream_catch_up_enabled", self.stream_catch_up_toggle.isChecked())
-
-        self.config.set("use_antigravity_proxy_search", self.proxy_search_toggle.isChecked())
-        self.config.set("antigravity_proxy_url", self.proxy_url_input.text().strip())
-        self.config.set("antigravity_api_key", self.proxy_api_key_input.text().strip())
-        self.config.set("antigravity_search_model", self.proxy_model_input.text().strip())
-        self.config.set(
-            "antigravity_search_fallback_model",
-            self.proxy_fallback_model_input.text().strip(),
-        )
-        self.config.set(
-            "antigravity_thinking_level",
-            self._normalize_proxy_thinking_level(self.proxy_thinking_combo.currentText()),
-        )
 
         return self.config.save()
 
@@ -1530,25 +1446,12 @@ class MainWindow(QWidget):
             "stream_catch_up_enabled",
             self.stream_catch_up_toggle.isChecked(),
         )
-
-        proxy_enabled = self.proxy_search_toggle.isChecked()
-        self.config_changed.emit("use_antigravity_proxy_search", proxy_enabled)
-        self.config_changed.emit("antigravity_proxy_url", self.proxy_url_input.text().strip())
-        self.config_changed.emit("antigravity_api_key", self.proxy_api_key_input.text().strip())
-        self.config_changed.emit("antigravity_search_model", self.proxy_model_input.text().strip())
-        self.config_changed.emit(
-            "antigravity_search_fallback_model",
-            self.proxy_fallback_model_input.text().strip(),
-        )
-        self.config_changed.emit(
-            "antigravity_thinking_level",
-            self._normalize_proxy_thinking_level(self.proxy_thinking_combo.currentText()),
-        )
+        self.config_changed.emit("gemini_api_key", self.gemini_api_key_input.text().strip())
+        self.config_changed.emit("gemini_model", self.gemini_model_combo.currentText().strip())
 
     def _refresh_pipeline_summary(self):
         use_formatter = self.format_toggle.isChecked()
         use_translation = self.translation_toggle.isChecked() and self.translation_toggle.isEnabled()
-        is_proxy = self.format_provider_combo.currentText() == "Antigravity Proxy"
         is_casual = self.casual_toggle.isChecked()
 
         if not use_formatter:
@@ -1556,57 +1459,14 @@ class MainWindow(QWidget):
             output_text = "Direct paste"
         elif use_translation:
             pipeline_text = "Format + Translate"
-            if is_proxy:
-                pipeline_text += " (Proxy)"
             lang = self.language_input.currentText().strip() or "Target language"
             output_text = f"{lang} output"
         else:
-            if is_casual:
-                pipeline_text = "Casual" + (" (Proxy)" if is_proxy else "")
-            else:
-                pipeline_text = "Proxy format" if is_proxy else "Format only"
+            pipeline_text = "Casual" if is_casual else "Format only"
             output_text = "Chat-style text" if is_casual else "Polished text"
 
         self.pipeline_stat_value.setText(pipeline_text)
         self.output_stat_value.setText(output_text)
-
-    def _proxy_help_target_height(self):
-        if not hasattr(self, "proxy_setup_scroll"):
-            return 0
-        hint_height = self.proxy_setup_hint.sizeHint().height()
-        # Keep instructions in a compact area; allow scrolling for the full text.
-        return min(130, hint_height + 12)
-
-    def _animate_proxy_help(self, show):
-        if not hasattr(self, "proxy_setup_anim"):
-            return
-
-        start_height = self.proxy_setup_container.maximumHeight()
-        end_height = self._proxy_help_target_height() if show else 0
-        self.proxy_setup_anim.stop()
-        self.proxy_setup_anim.setStartValue(start_height)
-        self.proxy_setup_anim.setEndValue(end_height)
-        self.proxy_setup_anim.start()
-
-    def _set_proxy_settings_enabled(self, enabled, animate=False):
-        self.proxy_url_label.setEnabled(enabled)
-        self.proxy_url_input.setEnabled(enabled)
-        self.proxy_api_key_label.setEnabled(enabled)
-        self.proxy_api_key_input.setEnabled(enabled)
-        self.proxy_api_key_toggle_btn.setEnabled(enabled)
-        self.proxy_model_label.setEnabled(enabled)
-        self.proxy_model_input.setEnabled(enabled)
-        self.proxy_fallback_model_label.setEnabled(enabled)
-        self.proxy_fallback_model_input.setEnabled(enabled)
-        self.proxy_thinking_label.setEnabled(enabled)
-        self.proxy_thinking_combo.setEnabled(enabled)
-
-        if animate:
-            self._animate_proxy_help(enabled)
-        else:
-            self.proxy_setup_container.setMaximumHeight(
-                self._proxy_help_target_height() if enabled else 0
-            )
 
     def _update_stream_reveal_value_label(self):
         wps = int(self.stream_reveal_speed_slider.value())
@@ -1641,19 +1501,6 @@ class MainWindow(QWidget):
         use_formatter = self.config.get("use_formatter", False)
         self.format_toggle.setChecked(use_formatter)
 
-        format_provider = self.config.get("format_provider", "groq")
-        self.format_provider_combo.blockSignals(True)
-        self.format_provider_combo.setCurrentText(
-            "Antigravity Proxy" if format_provider == "proxy" else "Groq"
-        )
-        self.format_provider_combo.blockSignals(False)
-
-        proxy_fmt_model = self.config.get("proxy_formatter_model", "")
-        self.proxy_formatter_model_combo.blockSignals(True)
-        if proxy_fmt_model:
-            self.proxy_formatter_model_combo.setCurrentText(proxy_fmt_model)
-        self.proxy_formatter_model_combo.blockSignals(False)
-
         casual_enabled = self.config.get("casual_mode", False)
         self.casual_toggle.blockSignals(True)
         self.casual_toggle.setChecked(casual_enabled)
@@ -1667,10 +1514,12 @@ class MainWindow(QWidget):
         self.language_input.setEnabled(translation_enabled)
         self.language_label.setEnabled(translation_enabled)
 
-        proxy_enabled = bool(self.config.get("use_antigravity_proxy_search", False))
-        self.proxy_search_toggle.blockSignals(True)
-        self.proxy_search_toggle.setChecked(proxy_enabled)
-        self.proxy_search_toggle.blockSignals(False)
+        self.gemini_api_key_input.setText(self.config.get("gemini_api_key", ""))
+        self.gemini_model_combo.blockSignals(True)
+        self.gemini_model_combo.setCurrentText(
+            self.config.get("gemini_model", "models/gemma-4-31b-it")
+        )
+        self.gemini_model_combo.blockSignals(False)
         realtime_enabled = bool(self.config.get("stream_realtime_enabled", True))
         self.stream_realtime_toggle.blockSignals(True)
         self.stream_realtime_toggle.setChecked(realtime_enabled)
@@ -1687,29 +1536,6 @@ class MainWindow(QWidget):
         self.stream_catch_up_toggle.blockSignals(False)
         self._update_stream_reveal_value_label()
         self._set_stream_reveal_controls_enabled(not realtime_enabled)
-        self.proxy_url_input.setText(
-            self.config.get("antigravity_proxy_url", "http://127.0.0.1:8045")
-        )
-        self.proxy_api_key_input.setText(self.config.get("antigravity_api_key", ""))
-        self.proxy_model_input.setText(
-            self.config.get("antigravity_search_model", "gemini-3-flash")
-        )
-        self.proxy_fallback_model_input.setText(
-            self.config.get("antigravity_search_fallback_model", "gemini-2.5-flash")
-        )
-        thinking_labels = {
-            "high": "High",
-            "medium": "Medium",
-            "low": "Low",
-            "none": "None",
-        }
-        proxy_thinking_level = self._normalize_proxy_thinking_level(
-            self.config.get("antigravity_thinking_level", "high")
-        )
-        self.proxy_thinking_combo.blockSignals(True)
-        self.proxy_thinking_combo.setCurrentText(thinking_labels[proxy_thinking_level])
-        self.proxy_thinking_combo.blockSignals(False)
-        self._set_proxy_settings_enabled(proxy_enabled, animate=False)
 
         self._refresh_pipeline_summary()
         self._refresh_theme_widgets()
@@ -1882,41 +1708,16 @@ class MainWindow(QWidget):
         self._refresh_pipeline_summary()
 
     def _update_formatter_controls_visibility(self):
-        """Show/hide Groq vs Proxy model controls based on format provider."""
+        """Enable formatting controls when formatter output is active."""
         enabled = self.format_toggle.isChecked()
-        is_proxy = self.format_provider_combo.currentText() == "Antigravity Proxy"
-
-        self.format_provider_label.setEnabled(enabled)
-        self.format_provider_combo.setEnabled(enabled)
-
-        # Groq model controls
-        self.model_label.setVisible(enabled and not is_proxy)
-        self.model_combo.setVisible(enabled and not is_proxy)
-        self.model_label.setEnabled(enabled and not is_proxy)
-        self.model_combo.setEnabled(enabled and not is_proxy)
-
-        # Proxy model controls
-        self.proxy_formatter_model_label.setVisible(enabled and is_proxy)
-        self.proxy_formatter_model_combo.setVisible(enabled and is_proxy)
-        self.proxy_formatter_model_label.setEnabled(enabled and is_proxy)
-        self.proxy_formatter_model_combo.setEnabled(enabled and is_proxy)
+        self.model_label.setVisible(True)
+        self.model_combo.setVisible(True)
+        self.model_label.setEnabled(enabled)
+        self.model_combo.setEnabled(enabled)
 
         # Casual mode controls
         self.casual_toggle.setEnabled(enabled)
         self.casual_hint.setEnabled(enabled)
-
-    def on_format_provider_changed(self, text):
-        provider = "proxy" if text == "Antigravity Proxy" else "groq"
-        self.config.set("format_provider", provider)
-        self.config.save()
-        self._update_formatter_controls_visibility()
-        self._refresh_pipeline_summary()
-        self.config_changed.emit("format_provider", provider)
-
-    def on_proxy_formatter_model_changed(self, text):
-        if text:
-            self.config.set("proxy_formatter_model", text.strip())
-            self.config.save()
 
     def on_casual_toggle_changed(self, state):
         enabled = state == int(Qt.CheckState.Checked.value)
@@ -1990,48 +1791,26 @@ class MainWindow(QWidget):
         self.config.save()
         self.config_changed.emit("stream_catch_up_enabled", enabled)
 
-    def on_proxy_search_toggle_changed(self, state):
-        enabled = state == int(Qt.CheckState.Checked.value)
-        self.config.set("use_antigravity_proxy_search", enabled)
-        self.config.save()
-        self._set_proxy_settings_enabled(enabled, animate=True)
-        if enabled and self.settings_tabs.currentIndex() != 2:
-            self.settings_tabs.setCurrentIndex(2)
-        self.config_changed.emit("use_antigravity_proxy_search", enabled)
-
-    def _save_proxy_field(self, key, text):
+    def _save_search_field(self, key, text):
         normalized = str(text or "").strip()
         self.config.set(key, normalized)
         self.config.save()
         self.config_changed.emit(key, normalized)
 
-    def on_proxy_url_changed(self):
-        self._save_proxy_field("antigravity_proxy_url", self.proxy_url_input.text())
+    def on_gemini_api_key_changed(self):
+        self._save_search_field("gemini_api_key", self.gemini_api_key_input.text())
 
-    def on_proxy_api_key_changed(self):
-        self._save_proxy_field("antigravity_api_key", self.proxy_api_key_input.text())
+    def on_gemini_model_changed(self, text):
+        self._save_search_field("gemini_model", text)
 
-    def on_proxy_model_changed(self):
-        self._save_proxy_field("antigravity_search_model", self.proxy_model_input.text())
-
-    def on_proxy_fallback_model_changed(self):
-        self._save_proxy_field(
-            "antigravity_search_fallback_model",
-            self.proxy_fallback_model_input.text(),
-        )
-
-    def on_proxy_thinking_level_changed(self, text):
-        normalized = self._normalize_proxy_thinking_level(text)
-        self._save_proxy_field("antigravity_thinking_level", normalized)
-
-    def on_proxy_api_key_toggle_visibility(self):
-        showing = self.proxy_api_key_input.echoMode() == QLineEdit.EchoMode.Normal
+    def on_gemini_api_key_toggle_visibility(self):
+        showing = self.gemini_api_key_input.echoMode() == QLineEdit.EchoMode.Normal
         if showing:
-            self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-            self.proxy_api_key_toggle_btn.setText("Show")
+            self.gemini_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.gemini_api_key_toggle_btn.setText("Show")
         else:
-            self.proxy_api_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.proxy_api_key_toggle_btn.setText("Hide")
+            self.gemini_api_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.gemini_api_key_toggle_btn.setText("Hide")
 
     def on_force_save_clicked(self):
         if self._force_save_in_progress:
@@ -2130,18 +1909,18 @@ class MainWindow(QWidget):
 
         self.model_combo.blockSignals(False)
 
-    def set_proxy_formatter_model_list(self, models):
-        self.proxy_formatter_model_combo.blockSignals(True)
-        current = self.proxy_formatter_model_combo.currentText()
-        self.proxy_formatter_model_combo.clear()
-        self.proxy_formatter_model_combo.addItems(models)
+    def set_gemini_model_list(self, models):
+        self.gemini_model_combo.blockSignals(True)
+        current = self.gemini_model_combo.currentText()
+        self.gemini_model_combo.clear()
+        self.gemini_model_combo.addItems(models)
         if current:
-            self.proxy_formatter_model_combo.setCurrentText(current)
+            self.gemini_model_combo.setCurrentText(current)
         elif models:
-            saved = self.config.get("proxy_formatter_model", "")
+            saved = self.config.get("gemini_model", "")
             if saved and saved in models:
-                self.proxy_formatter_model_combo.setCurrentText(saved)
-        self.proxy_formatter_model_combo.blockSignals(False)
+                self.gemini_model_combo.setCurrentText(saved)
+        self.gemini_model_combo.blockSignals(False)
 
     def _set_connected_status(self, text):
         self._set_status_badge(text, "ok")
