@@ -41,11 +41,19 @@ output/
 gha-creds-*.json
 
 # Local-only directories (do not publish)
-.github/
+# NOTE: pattern is .github/* (not .github/) so we can re-include specific
+# files below — git refuses to recurse into a directory matched as a whole.
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/release.yml
 **/Antigravity-Manager*/
 **/antigravity-manager*/
 **/Antigravity*/
 **/antigravity*/
+
+# Inno Setup compiler output
+installer/Output/
 
 personal run.bat
 test_proxy.py

@@ -8,7 +8,3 @@ google-genai>=1.30.0
 openai>=1.0.0
 keyring>=24.0.0
 numpy>=1.24.0
-pytest
-pytest-cov
-pytest-qt
-pytest-mock

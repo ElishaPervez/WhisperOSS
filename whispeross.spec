@@ -30,6 +30,10 @@ for pkg in (
 # PyInstaller sees them.
 hiddenimports += collect_submodules("src")
 
+# `keyboard` loads its platform backend lazily; PyInstaller's static
+# analysis misses it on Windows.
+hiddenimports += ["keyboard._winkeyboard"]
+
 block_cipher = None
 
 a = Analysis(
