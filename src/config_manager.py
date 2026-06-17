@@ -27,6 +27,7 @@ DEFAULT_CONFIG = {
     # retained for backward-compatibility with older configs; only "Default" is used.
     "formatting_style": "Default",
     "input_device_index": None, # None means default
+    "always_listening": True,  # keep mic stream open for pre-roll (no first-word clipping)
     "appearance_mode": "auto",  # auto | dark | light
     "animation_fps": 100,
     # Streaming answer reveal behavior in the floating visualizer.

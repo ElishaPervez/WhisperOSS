@@ -51,6 +51,7 @@ def test_load_default_config():
     assert manager.get("gemini_model") == "models/gemma-4-31b-it"
     assert manager.get("appearance_mode") == "auto"
     assert manager.get("animation_fps") == 100
+    assert manager.get("always_listening") is True
     assert manager.get("stream_realtime_enabled") is True
     assert manager.get("stream_reveal_wps") == 8
     assert manager.get("stream_catch_up_enabled") is True

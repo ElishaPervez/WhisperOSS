@@ -94,6 +94,7 @@ class TestIntegration(unittest.TestCase):
             image_bytes=None,
             stream_callback=worker._emit_stream_text,
             thought_callback=worker._emit_thought_text,
+            with_search=True,
         )
 
         # Verify signal emission
@@ -131,6 +132,7 @@ class TestIntegration(unittest.TestCase):
             image_bytes=None,
             stream_callback=worker._emit_stream_text,
             thought_callback=worker._emit_thought_text,
+            with_search=True,
         )
         result_signal.assert_called_once_with("Quixotic means extremely idealistic.")
         error_signal.assert_not_called()
@@ -224,6 +226,7 @@ class TestIntegration(unittest.TestCase):
             image_bytes=None,
             stream_callback=worker._emit_stream_text,
             thought_callback=worker._emit_thought_text,
+            with_search=True,
         )
         result_signal.assert_called_once_with("DNS maps names to IP addresses.")
         error_signal.assert_not_called()

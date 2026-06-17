@@ -94,7 +94,10 @@ class WhisperAppController(QObject):
         self._check_first_run_api_key()
         self.groq = GroqClient(self.config.get("api_key"))
         self.gemini = GeminiClient(self.config.get("gemini_api_key"))
-        self.recorder = AudioRecorder(self.config.get("input_device_index"))
+        self.recorder = AudioRecorder(
+            self.config.get("input_device_index"),
+            always_listening=bool(self.config.get("always_listening", True)),
+        )
 
         # Standard Hotkey: Ctrl+Win (Transcribe)
         self.hotkey_mgr = HotkeyManager(
@@ -245,6 +248,7 @@ class WhisperAppController(QObject):
         # exclusively by HotkeyManager signals.  The signal is retained in
         # MainWindow for callers that may want to add a UI record button later.
         self.window.config_changed.connect(self.on_config_changed)
+        self.window.refresh_devices_requested.connect(self.refresh_device_list)
 
         # Recorder -> Floating visualizer overlay
         self.recorder.visualizer_update.connect(self.visualizer.update_level)
@@ -264,6 +268,15 @@ class WhisperAppController(QObject):
         self.hotkey_mgr.start_listening()
         self.search_hotkey.start_listening()
         self.image_search_hotkey.start_listening()
+
+        # Open the persistent pre-roll stream at startup so the first word is
+        # never clipped (no-op when always_listening is disabled).
+        self.recorder.start_listening()
+
+    def refresh_device_list(self) -> None:
+        """Re-enumerate audio input devices (re-inits PortAudio to surface hot-plugged mics)."""
+        devices = self.recorder.refresh_devices()
+        self.window.set_device_list(devices)
 
     def on_config_changed(self, key: str, value: Any) -> None:
         if key == "api_key":
@@ -291,6 +304,11 @@ class WhisperAppController(QObject):
             self.config.save()
         elif key == "input_device_index":
             self.recorder.update_device(value)
+        elif key == "always_listening":
+            enabled = bool(value)
+            self.config.set("always_listening", enabled)
+            self.config.save()
+            self.recorder.set_always_listening(enabled)
         elif key == "animation_fps":
             self.visualizer.set_animation_fps(value)
         elif key == "stream_realtime_enabled":
@@ -356,11 +374,13 @@ class WhisperAppController(QObject):
             )
             self._search_stream_started = False
             self.recording_mode = mode
+            # Start audio capture FIRST so the mic is recording immediately and is
+            # not queued behind GUI work (show/position) — prevents first-word clipping.
+            self.recorder.start_recording()
             self.visualizer.set_listening_mode(reason=f"recording started ({mode})")
             # Show first, then position - some window systems reset position during show()
             self.visualizer.show()
             self._position_visualizer_at_cursor()
-            self.recorder.start_recording()
         else:
             # Keep visualizer visible and switch to a processing animation
             # while the API request and transcription are in progress.
@@ -1052,6 +1072,9 @@ class WhisperAppController(QObject):
         # Stop recording if active
         if self.recorder.is_recording:
             self.recorder.stop_recording()
+
+        # Close the persistent pre-roll stream on shutdown (no-op in legacy mode).
+        self.recorder.stop_listening()
 
         # Stop and join any active worker thread before tearing down the event loop.
         if self.worker is not None:

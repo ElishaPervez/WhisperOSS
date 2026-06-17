@@ -244,6 +244,7 @@ class MainWindow(QWidget):
     # Signals to Main Controller
     record_toggled = pyqtSignal(bool)  # True=Start, False=Stop
     config_changed = pyqtSignal(str, object)  # key, value
+    refresh_devices_requested = pyqtSignal()  # re-enumerate audio input devices
     STREAM_REVEAL_MIN_WPS = 1
     STREAM_REVEAL_MAX_WPS = 25
     STREAM_REVEAL_DEFAULT_WPS = 8
@@ -1081,9 +1082,35 @@ class MainWindow(QWidget):
         pipeline_layout.addWidget(input_caption)
 
         pipeline_layout.addWidget(QLabel("Microphone"))
+        device_row = QHBoxLayout()
         self.device_combo = QComboBox()
         self.device_combo.currentIndexChanged.connect(self.on_device_changed)
-        pipeline_layout.addWidget(self.device_combo)
+        self.refresh_devices_btn = QPushButton("Refresh")
+        self.refresh_devices_btn.clicked.connect(self.refresh_devices_requested.emit)
+        device_row.addWidget(self.device_combo, 1)
+        device_row.addWidget(self.refresh_devices_btn)
+        pipeline_layout.addLayout(device_row)
+
+        always_listening_row = QHBoxLayout()
+        always_listening_label = QLabel("Always-listening (low latency)")
+        self.always_listening_toggle = AnimatedToggle()
+        self.always_listening_toggle.setChecked(bool(self.config.get("always_listening", True)))
+        self.always_listening_toggle.stateChanged.connect(
+            self.on_always_listening_toggle_changed
+        )
+        always_listening_row.addWidget(always_listening_label)
+        always_listening_row.addStretch()
+        always_listening_row.addWidget(self.always_listening_toggle)
+        pipeline_layout.addLayout(always_listening_row)
+
+        self.always_listening_hint = QLabel(
+            "On: the mic stays ready in the background so the first word is never cut "
+            "off (Windows will show the mic-in-use indicator while it is on). Off: the "
+            "mic only opens when you start recording."
+        )
+        self.always_listening_hint.setObjectName("MutedText")
+        self.always_listening_hint.setWordWrap(True)
+        pipeline_layout.addWidget(self.always_listening_hint)
 
         divider_1 = QFrame()
         divider_1.setObjectName("Divider")
@@ -1636,6 +1663,7 @@ class MainWindow(QWidget):
         if not self._initial_layout_applied:
             self._initial_layout_applied = True
             QTimer.singleShot(0, self._ensure_initial_layout)
+        self.refresh_devices_requested.emit()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1775,6 +1803,12 @@ class MainWindow(QWidget):
         enabled = state == int(Qt.CheckState.Checked.value)
         self.config.set("web_search_enabled", enabled)
         self.config.save()
+
+    def on_always_listening_toggle_changed(self, state):
+        enabled = state == int(Qt.CheckState.Checked.value)
+        self.config.set("always_listening", enabled)
+        self.config.save()
+        self.config_changed.emit("always_listening", enabled)
 
     def on_translate_toggle_changed(self, state):
         enabled = state == int(Qt.CheckState.Checked.value)

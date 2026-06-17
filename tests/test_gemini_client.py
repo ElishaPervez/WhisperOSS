@@ -126,6 +126,35 @@ def test_run_search_uses_grounding_and_streams_cumulative_text(fake_sdk_modules)
     assert len(config.kwargs["tools"]) == 1
     assert isinstance(config.kwargs["tools"][0], _FakeTool)
     assert isinstance(config.kwargs["tools"][0].kwargs["google_search"], _FakeGoogleSearch)
+    # With grounding (with_search=True) thinking_config is intentionally omitted:
+    # google_search and thinking_config are incompatible on Gemini 2.5 (400).
+    assert "thinking_config" not in config.kwargs
+
+
+def test_run_search_without_grounding_uses_thinking_config(fake_sdk_modules):
+    fake_genai, fake_types = fake_sdk_modules
+    sdk_client = fake_genai.Client.return_value
+    sdk_client.models.generate_content_stream.return_value = [
+        pytypes.SimpleNamespace(text="Answer"),
+    ]
+
+    class ClientUnderTest(GeminiClient):
+        def _load_sdk_modules(self):
+            return fake_genai, fake_types
+
+    client = ClientUnderTest(api_key="gem-key")
+
+    result = client.run_search(
+        query="What is DNS?",
+        model_id="models/gemma-4-31b-it",
+        with_search=False,
+    )
+
+    assert result == "Answer"
+    kwargs = sdk_client.models.generate_content_stream.call_args.kwargs
+    config = kwargs["config"]
+    # Knowledge-only mode: no grounding tools, thinking_config kept on.
+    assert "tools" not in config.kwargs
     assert isinstance(config.kwargs["thinking_config"], _FakeThinkingConfig)
 
 
